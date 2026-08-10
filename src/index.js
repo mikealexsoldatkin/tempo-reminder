@@ -40,11 +40,15 @@ export async function run() {
   const people = await getProjectPeople(PROJECT_KEY);
   console.log(`Found ${people.length} people`);
 
+  // 3b. Один bulk-запрос в Tempo на всё окно вместо запроса на каждого человека:
+  //     иначе упираемся в лимит шлюза 5 req/s и получаем 429.
+  const authorsWithWorklogs = await getWorklogAuthors(from, to, TEMPO_TOKEN);
+  console.log(`Tempo: ${authorsWithWorklogs.size} authors logged time in window`);
+
   let reminded = 0;
   for (const person of people) {
     try {
-      const hasWorklog = await tempoHasWorklog(person.accountId, from, to, TEMPO_TOKEN);
-      if (hasWorklog) continue;
+      if (authorsWithWorklogs.has(person.accountId)) continue;
 
       // 4. Нет репорта — ищем в Slack и шлём DM.
       if (!person.email) {
@@ -107,15 +111,55 @@ async function getProjectPeople(projectKey) {
 
 /* ----------------------------- Tempo ----------------------------- */
 
-async function tempoHasWorklog(accountId, from, to, token) {
-  const url = `https://api.tempo.io/4/worklogs/user/${accountId}?from=${from}&to=${to}&limit=1`;
-  const res = await fetch(url, {
-    headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
-  });
-  if (!res.ok) throw new Error(`Tempo ${res.status}: ${await res.text()}`);
-  const data = await res.json();
-  const count = data?.metadata?.count ?? (data?.results ? data.results.length : 0);
-  return count > 0;
+/**
+ * Все авторы, у которых есть worklog в окне [from..to].
+ * Один пагинированный запрос на всё окно, а не по запросу на человека:
+ * шлюз Tempo режет на 5 req/s и отдаёт 429.
+ */
+async function getWorklogAuthors(from, to, token) {
+  const authors = new Set();
+  const limit = 1000; // максимум страницы Tempo v4
+  let offset = 0;
+
+  while (true) {
+    const url = `https://api.tempo.io/4/worklogs?from=${from}&to=${to}&limit=${limit}&offset=${offset}`;
+    const data = await tempoFetch(url, token);
+    const results = data?.results ?? [];
+
+    for (const wl of results) {
+      const accountId = wl?.author?.accountId;
+      if (accountId) authors.add(accountId);
+    }
+
+    if (results.length < limit) break;
+    offset += limit;
+    await sleep(250); // держимся ниже 5 req/s
+  }
+  return authors;
+}
+
+/**
+ * GET в Tempo с ретраями на 429/5xx: уважаем Retry-After, иначе экспонента.
+ */
+async function tempoFetch(url, token, attempts = 5) {
+  for (let attempt = 1; ; attempt++) {
+    const res = await fetch(url, {
+      headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+    });
+    if (res.ok) return res.json();
+
+    const retryable = res.status === 429 || res.status >= 500;
+    if (!retryable || attempt >= attempts) {
+      throw new Error(`Tempo ${res.status}: ${await res.text()}`);
+    }
+
+    const retryAfter = Number(res.headers.get('retry-after'));
+    const waitMs = Number.isFinite(retryAfter) && retryAfter > 0
+      ? retryAfter * 1000
+      : 1000 * 2 ** (attempt - 1); // 1s, 2s, 4s, 8s
+    console.warn(`Tempo ${res.status}, retry ${attempt}/${attempts - 1} in ${waitMs}ms`);
+    await sleep(waitMs);
+  }
 }
 
 /* ----------------------------- Slack ----------------------------- */
@@ -161,4 +205,8 @@ function addDays(date, days) {
 
 function isoDate(date) {
   return date.toISOString().slice(0, 10); // YYYY-MM-DD
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
