@@ -6,7 +6,7 @@ modules:
   scheduledTrigger:
     - key: tempo-reminder-daily
       function: main
-      interval: day  # options: fiveMinute | hour | day | week (не cron).
+      interval: fiveMinute  # options: fiveMinute | hour | day | week (не cron).
   function:
     - key: main
       handler: index.run
