@@ -1,0 +1,10 @@
+{
+  "name": "forge-tempo-reminder",
+  "version": "1.0.0",
+  "description": "Forge app: reminds project members in Slack when they haven't logged time in Tempo for 2 working days",
+  "type": "module",
+  "main": "src/index.js",
+  "dependencies": {
+    "@forge/api": "^8.0.2"
+  }
+}

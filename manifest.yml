@@ -1,0 +1,28 @@
+app:
+  id: ari:cloud:ecosystem::app/c8529d15-644e-4dbd-8c0a-987b9996e6d9
+  runtime:
+    name: nodejs24.x
+modules:
+  scheduledTrigger:
+    - key: tempo-reminder-daily
+      function: main
+      interval: day  # options: fiveMinute | hour | day | week (не cron).
+  function:
+    - key: main
+      handler: index.run
+permissions:
+  scopes:
+    - read:jira-user
+    - read:jira-work
+  external:
+    fetch:
+      backend:
+        - address: 'api.tempo.io'
+        - address: 'app.slack.com'
+        - address: 'slack.com'
+environment:
+  # Значения задаются через `forge variables set --encrypt ...` (см. README).
+  variables:
+    - PROJECT_KEY
+    - SLACK_BOT_TOKEN
+    - TEMPO_TOKEN
