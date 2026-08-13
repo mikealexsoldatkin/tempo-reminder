@@ -33,6 +33,9 @@ permissions:
     - read:jira-user
     - read:jira-work
     - storage:app
+    # Email API: приложению видны только профильные поля с видимостью «Anyone»,
+    # а email обычно ограничен организацией. Без этого scope адреса не прочитать.
+    - read:email-address:jira
   external:
     fetch:
       backend:

@@ -1,6 +1,6 @@
 import api, { assumeTrustedRoute, route } from '@forge/api';
 
-// maxResults у /rest/api/3/user/bulk по умолчанию всего 10, поэтому размер страницы задаём явно.
+// Сколько accountId кладём в один запрос за email'ами.
 const BULK_CHUNK = 100;
 
 // /rest/api/3/group отдаёт максимум 50 участников за раз; остальные — сдвигом окна expand.
@@ -192,12 +192,15 @@ async function getGroupMembers(groupId) {
 }
 
 /**
- * Актёры-пользователи роли приходят без email, а он нужен для поиска в Slack.
- * Добираем одним bulk-запросом на сотню аккаунтов вместо запроса на человека.
+ * Добирает email'ы актёрам ролей — без них не найти человека в Slack.
+ *
+ * Берём именно Email API, а не /user/bulk: приложению видны только профильные поля с
+ * видимостью «Anyone», а email обычно стоит «Only people in your organization» — коллега
+ * его в профиле видит, приложение нет. Этот эндпоинт отдаёт адрес независимо от видимости,
+ * требует scope read:email-address:jira и в Forge работает только через asApp().
  */
 async function fillMissingEmails(byAccountId) {
   const missing = [...byAccountId.values()].filter((p) => !p.email).map((p) => p.accountId);
-  if (missing.length === 0) return;
 
   for (let i = 0; i < missing.length; i += BULK_CHUNK) {
     const chunk = missing.slice(i, i + BULK_CHUNK);
@@ -206,19 +209,22 @@ async function fillMissingEmails(byAccountId) {
     const query = chunk.map((id) => `accountId=${encodeURIComponent(id)}`).join('&');
     const res = await api
       .asApp()
-      .requestJira(
-        assumeTrustedRoute(`/rest/api/3/user/bulk?maxResults=${BULK_CHUNK}&${query}`),
-        { headers: { Accept: 'application/json' } }
-      );
-    // Email — не критичен для добавления: без него человек попадёт в список с пометкой
-    // «set an email», поэтому неудачу здесь просто игнорируем.
-    if (!res.ok) return;
+      .requestJira(assumeTrustedRoute(`/rest/api/3/user/email/bulk?${query}`), {
+        headers: { Accept: 'application/json' },
+      });
+    // Email не критичен для добавления: без него человек попадёт в список с пометкой
+    // «set an email» и адрес можно вписать руками, поэтому ошибку только логируем.
+    if (!res.ok) {
+      console.warn(`Не удалось получить email'ы: ${await jiraError(res, 'user email bulk')}`);
+      continue;
+    }
 
-    for (const user of (await res.json())?.values ?? []) {
-      const person = byAccountId.get(user.accountId);
-      if (!person) continue;
-      if (!person.email && user.emailAddress) person.email = user.emailAddress;
-      if (user.displayName) person.displayName = user.displayName;
+    // В спецификации ответ описан как одиночный объект, хотя эндпоинт bulk — принимаем оба вида.
+    const data = await res.json();
+    const entries = Array.isArray(data) ? data : data?.values ?? (data?.accountId ? [data] : []);
+    for (const { accountId, email } of entries) {
+      const person = byAccountId.get(accountId);
+      if (person && email) person.email = email;
     }
   }
 }
