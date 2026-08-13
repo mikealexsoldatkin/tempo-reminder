@@ -3,26 +3,43 @@ app:
   runtime:
     name: nodejs24.x
 modules:
+  # Страница настроек: Jira → Настройки → Приложения → «Напоминания о Tempo».
+  jira:adminPage:
+    - key: tempo-reminder-admin
+      resource: admin-page
+      render: native
+      resolver:
+        function: resolver
+      title: Напоминания о Tempo
   scheduledTrigger:
     - key: tempo-reminder-daily
-      function: main
-      interval: fiveMinute  # options: fiveMinute | hour | day | week (не cron).
+      function: scheduled
+      interval: day  # options: fiveMinute | hour | day | week (не cron).
+  # Сам прогон идёт в очереди: у консьюмера лимит 15 минут, а Tempo и Slack
+  # приходится опрашивать с паузами — в резолвер (10 с) и триггер это не влезает.
+  consumer:
+    - key: tempo-reminder-run-consumer
+      queue: reminder-run
+      resolver:
+        function: run-consumer
+        method: runReminder
   function:
-    - key: main
-      handler: index.run
+    - key: resolver
+      handler: index.resolver
+    - key: scheduled
+      handler: index.scheduled
+    - key: run-consumer
+      handler: index.runConsumer
+resources:
+  - key: admin-page
+    path: src/frontend/admin.jsx
 permissions:
   scopes:
     - read:jira-user
     - read:jira-work
+    - storage:app  # KVS: настройки, список пользователей и секретные токены
   external:
     fetch:
       backend:
         - address: 'api.tempo.io'
-        - address: 'app.slack.com'
         - address: 'slack.com'
-environment:
-  # Значения задаются через `forge variables set --encrypt ...` (см. README).
-  variables:
-    - PROJECT_KEY
-    - SLACK_BOT_TOKEN
-    - TEMPO_TOKEN
