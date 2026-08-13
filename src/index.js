@@ -1,4 +1,3 @@
-import { makeResolver } from '@forge/resolver';
 import { handler as adminResolver } from './backend/resolvers.js';
 import { enqueueRun } from './backend/runQueue.js';
 import { resolveSkipReason, runReminderCheck } from './backend/reminder.js';
@@ -34,35 +33,39 @@ export async function scheduled() {
   console.log(`Плановый прогон: ${message}`);
 }
 
-// Ключ соответствует `method: runReminder` у consumer-модуля в manifest.yml.
-export const runConsumer = makeResolver({
-  runReminder: async ({ payload }) => {
-    const trigger = payload?.trigger === 'manual' ? 'manual' : 'schedule';
-    const requestedBy = payload?.requestedBy ?? null;
-    const startedAt = new Date().toISOString();
+/**
+ * Консьюмер очереди. Начиная с @forge/events v2 это обычная функция, получающая
+ * AsyncEvent целиком (тело — в event.body), а не резолвер с именованным методом:
+ * старая форма `resolver: {function, method}` ещё проходит валидацию манифеста,
+ * но рантайм отклоняет push с 400 Bad Request.
+ */
+export async function runConsumer(event) {
+  const body = event?.body ?? {};
+  const trigger = body.trigger === 'manual' ? 'manual' : 'schedule';
+  const requestedBy = body.requestedBy ?? null;
+  const startedAt = new Date().toISOString();
 
-    await setRunStatus({ state: 'running', trigger, requestedBy });
+  await setRunStatus({ state: 'running', trigger, requestedBy });
 
-    try {
-      const report = await runReminderCheck({ trigger, requestedBy });
-      return { status: report.status };
-    } catch (e) {
-      // Наружу не бросаем: Forge повторил бы job, а часть DM уже могла уйти.
-      // Вместо ретрая сохраняем отчёт об ошибке — его покажет страница настроек.
-      console.error(`Прогон упал: ${e.stack ?? e.message}`);
-      await saveLastReport({
-        trigger,
-        requestedBy,
-        startedAt,
-        finishedAt: new Date().toISOString(),
-        window: null,
-        status: 'failed',
-        message: `Прогон прерван ошибкой: ${e.message}`,
-        rows: [],
-        totals: { tracked: 0, logged: 0, reminded: 0, skipped: 0, failed: 0 },
-      });
-      await setRunStatus({ state: 'idle', lastTrigger: trigger, lastStatus: 'failed' });
-      return { status: 'failed' };
-    }
-  },
-});
+  try {
+    const report = await runReminderCheck({ trigger, requestedBy });
+    return { status: report.status };
+  } catch (e) {
+    // Наружу не бросаем: Forge повторил бы job, а часть DM уже могла уйти.
+    // Вместо ретрая сохраняем отчёт об ошибке — его покажет страница настроек.
+    console.error(`Прогон упал: ${e.stack ?? e.message}`);
+    await saveLastReport({
+      trigger,
+      requestedBy,
+      startedAt,
+      finishedAt: new Date().toISOString(),
+      window: null,
+      status: 'failed',
+      message: `Прогон прерван ошибкой: ${e.message}`,
+      rows: [],
+      totals: { tracked: 0, logged: 0, reminded: 0, skipped: 0, failed: 0 },
+    });
+    await setRunStatus({ state: 'idle', lastTrigger: trigger, lastStatus: 'failed' });
+    return { status: 'failed' };
+  }
+}

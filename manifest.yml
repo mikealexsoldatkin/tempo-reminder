@@ -20,9 +20,7 @@ modules:
   consumer:
     - key: tempo-reminder-run-consumer
       queue: reminder-run
-      resolver:
-        function: run-consumer
-        method: runReminder
+      function: run-consumer
   function:
     - key: resolver
       handler: index.resolver

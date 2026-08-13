@@ -112,6 +112,13 @@ forge variables unset PROJECT_KEY
 5. **Размер значения в KVS** ограничен, поэтому отчёт о прогоне обрезается до 300 строк
    (сначала ошибки и пропуски); полный список — в `forge logs`.
 6. `scheduledTrigger` стартует примерно через 5 минут после первого деплоя/установки.
+7. **`@forge/events` v2+ сменил контракт консьюмера**: вместо `resolver: {function, method}` в
+   манифесте пишется `function:`, а хендлер — обычная `export async function handler(event)`,
+   где тело лежит в `event.body`. Старая форма **всё ещё проходит `forge lint`**, но рантайм
+   отклоняет `queue.push()` с `400 Bad Request` без пояснений.
+8. `"type": "module"` в package.json заставляет webpack считать наш код строгим ESM, из-за чего
+   default-импорт CJS-пакета связывается со всем `module.exports`. Поэтому резолверы собираются
+   через именованный `makeResolver()`, а не через `new Resolver()` (иначе — `out is not a constructor`).
 
 ---
 
