@@ -254,7 +254,7 @@ function collect(byAccountId, roleName, person) {
  */
 export async function isJiraAdmin() {
   const res = await api
-    .asUser()
+    .asApp()
     .requestJira(route`/rest/api/3/mypermissions?permissions=ADMINISTER`, {
       headers: { Accept: 'application/json' },
     });
