@@ -17,6 +17,7 @@ import { AddByProjectSection } from './components/AddByProjectSection';
 import { TrackedUsersTable } from './components/TrackedUsersTable';
 import { CredentialsTab } from './components/CredentialsTab';
 import { RunTab } from './components/RunTab';
+import { ErrorBoundary } from './components/ErrorBoundary';
 
 const AdminPage = () => {
   const [state, setState] = useState(null);
@@ -104,6 +105,8 @@ const AdminPage = () => {
 
 ForgeReconciler.render(
   <React.StrictMode>
-    <AdminPage />
+    <ErrorBoundary>
+      <AdminPage />
+    </ErrorBoundary>
   </React.StrictMode>
 );

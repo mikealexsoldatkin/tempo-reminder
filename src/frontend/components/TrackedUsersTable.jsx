@@ -75,23 +75,19 @@ export const TrackedUsersTable = ({ users, onUsersChange }) => {
           <InlineEdit
             defaultValue={user.email ?? ''}
             editView={(fieldProps) => <Textfield {...fieldProps} placeholder="name@company.com" />}
-            readView={() =>
-              user.email ? (
-                <Text>{user.email}</Text>
-              ) : (
-                <Lozenge appearance="removed">set an email</Lozenge>
-              )
-            }
+            // Тип элемента не зависит от данных: иначе строка перерисовывается
+            // с другой структурой, когда у пользователя появляется email.
+            readView={() => <Text>{user.email ?? '— set an email'}</Text>}
             onConfirm={(value) => mutate(() => api.setTrackedUserEmail(user.accountId, value))}
           />
         ),
       },
       {
         key: 'slack',
-        content: user.slackUserId ? (
-          <Lozenge appearance="success">found</Lozenge>
-        ) : (
-          <Text>—</Text>
+        content: (
+          <Lozenge appearance={user.slackUserId ? 'success' : 'default'}>
+            {user.slackUserId ? 'found' : '—'}
+          </Lozenge>
         ),
       },
       {
@@ -114,14 +110,18 @@ export const TrackedUsersTable = ({ users, onUsersChange }) => {
     <Stack space="space.150">
       <Heading as="h3" size="medium">Tracked users ({users.length})</Heading>
 
-      {users.length === 0 ? (
+      {/* Два независимых блока, а не тернар: при удалении последнего пользователя
+          на одной позиции не подменяется тип элемента. */}
+      {users.length === 0 && (
         <SectionMessage appearance="warning">
           <Text>
             The list is empty — no reminders will be sent. Add users by searching for a name or by
             project key.
           </Text>
         </SectionMessage>
-      ) : (
+      )}
+
+      {users.length > 0 && (
         <Box>
           <DynamicTable head={head} rows={rows} rowsPerPage={20} isLoading={isBusy} />
         </Box>

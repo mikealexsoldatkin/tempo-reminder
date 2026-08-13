@@ -72,6 +72,7 @@ export const AddByProjectSection = ({ trackedIds, onUsersChange }) => {
             selected={search.selected}
             onToggle={search.toggle}
             trackedIds={trackedIds}
+            showRoles
           />
           <Inline space="space.100">
             <LoadingButton
