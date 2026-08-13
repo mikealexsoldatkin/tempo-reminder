@@ -1,7 +1,9 @@
 import api, { assumeTrustedRoute, route } from '@forge/api';
 
 // Сколько accountId кладём в один запрос за email'ами.
-const BULK_CHUNK = 100;
+// Жёсткий лимит эндпоинта — 90 аккаунтов («A maximum of 90 accounts are allowed in the
+// request»), в спецификации он не описан. Больше — и запрос падает с 400 целиком.
+const BULK_CHUNK = 90;
 
 // /rest/api/3/group отдаёт максимум 50 участников за раз; остальные — сдвигом окна expand.
 const GROUP_PAGE = 50;
