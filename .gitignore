@@ -1,0 +1,12 @@
+node_modules/
+
+# Секреты: токены Tempo/Slack задаются в UI приложения и в репозитории делать нечего.
+Креды
+.env
+.env.*
+
+# Служебное
+.idea/
+.vscode/
+.DS_Store
+.container-service-assets/
