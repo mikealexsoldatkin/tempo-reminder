@@ -3,20 +3,17 @@ app:
   runtime:
     name: nodejs24.x
 modules:
-  # Страница настроек: Jira → Настройки → Приложения → «Напоминания о Tempo».
   jira:adminPage:
     - key: tempo-reminder-admin
       resource: admin-page
       render: native
       resolver:
         function: resolver
-      title: Напоминания о Tempo
+      title: Tempo Reminders
   scheduledTrigger:
     - key: tempo-reminder-daily
       function: scheduled
-      interval: day  # options: fiveMinute | hour | day | week (не cron).
-  # Сам прогон идёт в очереди: у консьюмера лимит 15 минут, а Tempo и Slack
-  # приходится опрашивать с паузами — в резолвер (10 с) и триггер это не влезает.
+      interval: day  # options: fiveMinute | hour | day | week
   consumer:
     - key: tempo-reminder-run-consumer
       queue: reminder-run
@@ -35,7 +32,7 @@ permissions:
   scopes:
     - read:jira-user
     - read:jira-work
-    - storage:app  # KVS: настройки, список пользователей и секретные токены
+    - storage:app
   external:
     fetch:
       backend:
