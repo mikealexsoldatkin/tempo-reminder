@@ -25,7 +25,8 @@ export async function searchUsersByName(query, { maxResults = 50 } = {}) {
     );
   if (!res.ok) throw new Error(await jiraError(res, 'user search'));
 
-  return (await res.json()).filter(isRealUser).map(toPerson);
+  // /user/search почти никогда не отдаёт emailAddress приложению — добираем через Email API.
+  return fillMissingEmails((await res.json()).filter(isRealUser).map(toPerson));
 }
 
 /**
@@ -91,7 +92,7 @@ export async function searchProjectMembers(projectKey) {
     }
   }
 
-  await fillMissingEmails(byAccountId);
+  await fillMissingEmails([...byAccountId.values()]);
 
   const users = [...byAccountId.values()]
     .map(({ roles: memberOf, ...person }) => ({ ...person, roles: [...memberOf].sort() }))
@@ -201,8 +202,11 @@ async function getGroupMembers(groupId) {
  * его в профиле видит, приложение нет. Этот эндпоинт отдаёт адрес независимо от видимости,
  * требует scope read:email-address:jira и в Forge работает только через asApp().
  */
-async function fillMissingEmails(byAccountId) {
-  const missing = [...byAccountId.values()].filter((p) => !p.email).map((p) => p.accountId);
+async function fillMissingEmails(people) {
+  // Принимаем массив, а не Map: так добор одинаково работает и для поиска по имени,
+  // и для участников проекта. Объекты мутируются на месте, вызывающему возвращаем их же.
+  const byAccountId = new Map(people.filter((p) => !p.email).map((p) => [p.accountId, p]));
+  const missing = [...byAccountId.keys()];
 
   for (let i = 0; i < missing.length; i += BULK_CHUNK) {
     const chunk = missing.slice(i, i + BULK_CHUNK);
@@ -229,6 +233,7 @@ async function fillMissingEmails(byAccountId) {
       if (person && email) person.email = email;
     }
   }
+  return people;
 }
 
 function collect(byAccountId, roleName, person) {
@@ -254,7 +259,9 @@ function collect(byAccountId, roleName, person) {
  */
 export async function isJiraAdmin() {
   const res = await api
-    .asApp()
+    // Именно asUser(): mypermissions отдаёт права того, от чьего имени идёт запрос.
+    // С asApp() проверялись бы права приложения, а не того, кто открыл настройки.
+    .asUser()
     .requestJira(route`/rest/api/3/mypermissions?permissions=ADMINISTER`, {
       headers: { Accept: 'application/json' },
     });
