@@ -4,12 +4,16 @@ const TEMPO_API = 'https://api.tempo.io/4';
 const PAGE_LIMIT = 1000; // максимум страницы Tempo v4
 
 /**
- * Все accountId, у которых есть worklog в окне [from..to].
- * Один пагинированный запрос на всё окно, а не запрос на человека:
+ * За какие дни окна [from..to] у кого есть записи: accountId → множество дат
+ * (`startDate` worklog'а, то есть день, за который списано время, а не день ввода).
+ *
+ * Один пагинированный запрос на всё окно, а не запрос на человека или на день:
  * шлюз Tempo режет на ~5 req/s и отдаёт 429.
+ *
+ * @returns {Promise<Map<string, Set<string>>>}
  */
-export async function getWorklogAuthors(from, to, token) {
-  const authors = new Set();
+export async function getWorklogDaysByAuthor(from, to, token) {
+  const daysByAuthor = new Map();
   let offset = 0;
 
   while (true) {
@@ -20,13 +24,16 @@ export async function getWorklogAuthors(from, to, token) {
     const results = data?.results ?? [];
     for (const worklog of results) {
       const accountId = worklog?.author?.accountId;
-      if (accountId) authors.add(accountId);
+      const day = worklog?.startDate;
+      if (!accountId || !day) continue;
+      if (!daysByAuthor.has(accountId)) daysByAuthor.set(accountId, new Set());
+      daysByAuthor.get(accountId).add(day);
     }
     if (results.length < PAGE_LIMIT) break;
     offset += PAGE_LIMIT;
     await sleep(250); // держимся ниже 5 req/s
   }
-  return authors;
+  return daysByAuthor;
 }
 
 /**

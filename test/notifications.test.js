@@ -56,25 +56,32 @@ test('размер команды считается по всем отслеж�
 
 /* -------------------------------- шаблоны -------------------------------- */
 
-test('в напоминании сотруднику подставляются имя и окно', () => {
-  const text = renderUserMessage('Hi {name}, nothing from {from} to {to} ({days} days)', {
-    user: anna,
-    window,
-    lookbackWorkingDays: 2,
-  });
-  assert.equal(text, 'Hi Anna, nothing from 2026-08-12 to 2026-08-14 (2 days)');
+test('в напоминании сотруднику подставляются имя, окно и пропущенные дни', () => {
+  const text = renderUserMessage(
+    'Hi {name}, {missingCount} days missing ({missing}) out of {days} from {from} to {to}',
+    { user: anna, missingDays: ['2026-08-12', '2026-08-13'], window, lookbackWorkingDays: 3 }
+  );
+  assert.equal(
+    text,
+    'Hi Anna, 2 days missing (2026-08-12, 2026-08-13) out of 3 from 2026-08-12 to 2026-08-14'
+  );
 });
 
-test('в дайджесте менеджеру подставляются его имя, счётчик и список', () => {
+test('в дайджесте менеджеру у каждого подчинённого свои пропущенные дни', () => {
   const text = renderManagerMessage('{name}: {count} people\n{list}\nwindow {from}—{to}', {
     manager: managers[0],
     people: [anna, boris],
+    missingDaysByUser: new Map([
+      ['u1', ['2026-08-12']],
+      ['u2', ['2026-08-12', '2026-08-13']],
+    ]),
     window,
     lookbackWorkingDays: 2,
   });
   assert.equal(
     text,
-    'Maria: 2 people\n• Anna Ivanova\n• Boris Petrov\nwindow 2026-08-12—2026-08-14'
+    'Maria: 2 people\n• Anna Ivanova — 2026-08-12\n• Boris Petrov — 2026-08-12, 2026-08-13\n' +
+      'window 2026-08-12—2026-08-14'
   );
 });
 
@@ -102,6 +109,7 @@ test('плейсхолдер, пришедший из данных, повтор
   // Имя вида «{days}» не должно превратиться в число на следующем проходе.
   const text = renderUserMessage('Hi {name}, {days} days', {
     user: person('u9', '{days} Smith'),
+    missingDays: [],
     window,
     lookbackWorkingDays: 3,
   });
@@ -111,6 +119,7 @@ test('плейсхолдер, пришедший из данных, повтор
 test('неизвестный плейсхолдер остаётся в тексте как есть', () => {
   const text = renderUserMessage('Hi {name}, {unknown}', {
     user: anna,
+    missingDays: [],
     window,
     lookbackWorkingDays: 2,
   });

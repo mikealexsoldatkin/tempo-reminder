@@ -41,6 +41,15 @@ const CREDENTIALS = [
  * бэкенд принимает и то, и другое, поэтому форма держит строку и не пытается
  * разбирать ввод на лету: нормализацию делает сервер и возвращает результат.
  */
+/**
+ * Задержка не может съесть всё окно — иначе спрашивать было бы не о чем. Бэкенд
+ * прижимает значение сам, здесь то же правило нужно лишь стрелкам в поле.
+ */
+const maxDelayFor = (lookbackWorkingDays) => {
+  const lookback = Number(lookbackWorkingDays);
+  return Number.isFinite(lookback) ? Math.max(lookback - 1, 0) : 0;
+};
+
 const toForm = (settings) => ({
   ...settings,
   runTimes: (settings.runTimes ?? []).join(', '),
@@ -194,17 +203,45 @@ export const CredentialsTab = ({
       <Stack space="space.150">
         <Heading as="h3" size="medium">Check parameters</Heading>
 
-        <Label labelFor="lookback">Working days to check</Label>
-        <Textfield
-          id="lookback"
-          type="number"
-          width={120}
-          min={1}
-          max={30}
-          value={String(form.lookbackWorkingDays)}
-          onChange={(e) => setForm((prev) => ({ ...prev, lookbackWorkingDays: e.target.value }))}
-        />
-        <HelperMessage>The check window is the last N working days, including today.</HelperMessage>
+        <Inline space="space.200" alignBlock="start">
+          <Stack space="space.050">
+            <Label labelFor="lookback">Working days to check</Label>
+            <Textfield
+              id="lookback"
+              type="number"
+              width={120}
+              min={1}
+              max={30}
+              value={String(form.lookbackWorkingDays)}
+              onChange={(e) => setForm((prev) => ({ ...prev, lookbackWorkingDays: e.target.value }))}
+            />
+            <HelperMessage>
+              The whole window: the last N working days, including today. Weekends are skipped.
+            </HelperMessage>
+          </Stack>
+          <Stack space="space.050">
+            <Label labelFor="acceptable-delay">Acceptable days of delay</Label>
+            <Textfield
+              id="acceptable-delay"
+              type="number"
+              width={120}
+              min={0}
+              max={maxDelayFor(form.lookbackWorkingDays)}
+              value={String(form.acceptableDelayDays)}
+              onChange={(e) => setForm((prev) => ({ ...prev, acceptableDelayDays: e.target.value }))}
+            />
+            <HelperMessage>
+              How many of the most recent working days are excused — time for them may still be
+              missing. 0 means today’s time is already expected.
+            </HelperMessage>
+          </Stack>
+        </Inline>
+        <HelperMessage>
+          Time has to be logged for every working day of the window, not just for some of them. The
+          days actually asked about are the window minus the delay: with 5 and 1 the run checks the
+          4 working days before today. The delay always leaves at least one day to check, so it is
+          capped at “window − 1”.
+        </HelperMessage>
 
         <Inline space="space.200" alignBlock="start">
           <Stack space="space.050">
@@ -269,8 +306,9 @@ export const CredentialsTab = ({
                 onChange={(e) => setForm((prev) => ({ ...prev, messageTemplate: e.target.value }))}
               />
               <HelperMessage>
-                Sent to the person who didn’t log time. Placeholders: {'{name}'}, {'{from}'},{' '}
-                {'{to}'}, {'{days}'}.
+                Sent to the person who is missing time for at least one checked day. Placeholders:{' '}
+                {'{name}'}, {'{from}'}, {'{to}'}, {'{days}'}, {'{missing}'} — the missing days,
+                listed — and {'{missingCount}'} — how many of them.
               </HelperMessage>
             </Stack>
           </Box>
@@ -285,9 +323,10 @@ export const CredentialsTab = ({
                 }
               />
               <HelperMessage>
-                Sent to a manager who has someone to chase. The same placeholders plus {'{count}'} —
-                how many of their people didn’t log time — and {'{list}'} — their names, one per
-                line. {'{name}'} is the manager’s own name.
+                Sent to a manager who has someone to chase. Placeholders: {'{name}'} — the
+                manager’s own name — {'{from}'}, {'{to}'}, {'{days}'}, {'{count}'} — how many of
+                their people are missing time — and {'{list}'} — those people, one per line, each
+                with the days they’re missing.
               </HelperMessage>
             </Stack>
           </Box>

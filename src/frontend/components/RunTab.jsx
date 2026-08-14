@@ -85,9 +85,9 @@ export const RunTab = ({ runStatus, lastReport, trackedCount, credentials, onRun
       <Stack space="space.150">
         <Heading as="h3" size="medium">Manual run</Heading>
         <Text>
-          This button runs the same check as the schedule, but immediately: the app compares tracked
-          users against their Tempo worklogs and sends a Slack DM to everyone who hasn’t logged time.
-          The “weekend” and “once per day” limits don’t apply to a manual run.
+          This button runs the same check as the schedule, but immediately: the app looks at every
+          checked working day and sends a Slack DM to everyone who is missing time on at least one
+          of them. The “weekend” and “once per day” limits don’t apply to a manual run.
         </Text>
 
         {tokensMissing && (
@@ -205,6 +205,12 @@ const LastReport = ({ report }) => {
         {report.window && (
           <Text>
             window {report.window.from} — {report.window.to}
+          </Text>
+        )}
+        {report.requiredDays?.length > 0 && (
+          <Text>
+            days asked about: {report.requiredDays.length} ({report.requiredDays[0]} —{' '}
+            {report.requiredDays[report.requiredDays.length - 1]})
           </Text>
         )}
       </Inline>

@@ -29,15 +29,35 @@ export function addDays(isoDay, days) {
 }
 
 /**
- * Окно [from..to], где to — переданный день, а from отстоит на lookback рабочих дней назад
- * (выходные при отсчёте не учитываются: в понедельник окно перепрыгивает через субботу-воскресенье).
+ * Последние `count` рабочих дней по состоянию на isoToday, от старых к свежим.
+ * Сам isoToday входит в список, если он рабочий; если проверка запущена в выходной,
+ * отсчёт начинается с ближайшего рабочего дня назад.
+ *
+ * Дни возвращаются списком, а не парой границ: проверка идёт по каждому дню
+ * отдельно, и выходные внутри окна в ней не участвуют.
  */
-export function workingDayWindow(isoToday, lookbackWorkingDays) {
+export function lastWorkingDays(isoToday, count) {
+  const days = [];
   let cursor = isoToday;
-  let counted = 0;
-  while (counted < lookbackWorkingDays) {
+  while (days.length < count) {
+    if (!isWeekend(cursor)) days.unshift(cursor);
     cursor = addDays(cursor, -1);
-    if (!isWeekend(cursor)) counted++;
   }
-  return { from: cursor, to: isoToday };
+  return days;
+}
+
+/**
+ * Дни, за которые время уже обязано быть залогировано: из окна выбрасываются
+ * `acceptableDelayDays` самых свежих рабочих дней — на них задержка допустима.
+ *
+ * @param {string[]} days рабочие дни окна от старых к свежим
+ * @param {number} acceptableDelayDays сколько последних дней прощаем
+ */
+export function daysToReport(days, acceptableDelayDays) {
+  return days.slice(0, Math.max(days.length - Math.max(acceptableDelayDays, 0), 0));
+}
+
+/** Границы окна для запроса в Tempo и для текста сообщений. */
+export function windowOf(days) {
+  return { from: days[0], to: days[days.length - 1] };
 }

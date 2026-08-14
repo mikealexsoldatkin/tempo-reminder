@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { addDays, isWeekend, workingDayWindow } from '../src/backend/workdays.js';
+import { addDays, daysToReport, isWeekend, lastWorkingDays, windowOf } from '../src/backend/workdays.js';
 
 test('выходные распознаются', () => {
   assert.equal(isWeekend('2026-08-08'), true); // суббота
@@ -13,16 +13,41 @@ test('сдвиг дат переживает границы месяца', () =>
   assert.equal(addDays('2026-03-01', -1), '2026-02-28');
 });
 
-test('в середине недели окно 2 рабочих дней — это 2 календарных дня', () => {
-  assert.deepEqual(workingDayWindow('2026-08-12', 2), { from: '2026-08-10', to: '2026-08-12' });
+test('окно — это ровно N последних рабочих дней, включая сам день проверки', () => {
+  // 2026-08-12 — среда.
+  assert.deepEqual(lastWorkingDays('2026-08-12', 3), ['2026-08-10', '2026-08-11', '2026-08-12']);
+  assert.deepEqual(lastWorkingDays('2026-08-12', 1), ['2026-08-12']);
 });
 
-test('в понедельник и вторник окно перепрыгивает через выходные', () => {
-  assert.deepEqual(workingDayWindow('2026-08-10', 2), { from: '2026-08-06', to: '2026-08-10' });
-  assert.deepEqual(workingDayWindow('2026-08-11', 2), { from: '2026-08-07', to: '2026-08-11' });
+test('окно перепрыгивает через выходные', () => {
+  // Понедельник 2026-08-10: предыдущие рабочие дни — пятница и четверг.
+  assert.deepEqual(lastWorkingDays('2026-08-10', 3), ['2026-08-06', '2026-08-07', '2026-08-10']);
 });
 
-test('окно произвольной длины считает только рабочие дни', () => {
-  assert.deepEqual(workingDayWindow('2026-08-14', 5), { from: '2026-08-07', to: '2026-08-14' });
-  assert.deepEqual(workingDayWindow('2026-08-14', 1), { from: '2026-08-13', to: '2026-08-14' });
+test('запуск в выходной отсчитывает окно от ближайшего рабочего дня назад', () => {
+  // Суббота 2026-08-08 сама в окно не попадает.
+  assert.deepEqual(lastWorkingDays('2026-08-08', 2), ['2026-08-06', '2026-08-07']);
+});
+
+test('границы окна берутся из крайних дней списка', () => {
+  assert.deepEqual(windowOf(['2026-08-10', '2026-08-11', '2026-08-12']), {
+    from: '2026-08-10',
+    to: '2026-08-12',
+  });
+});
+
+/* --------------------------- допустимая задержка --------------------------- */
+
+test('допустимая задержка снимает вопросы к самым свежим дням окна', () => {
+  const days = ['2026-08-10', '2026-08-11', '2026-08-12'];
+  assert.deepEqual(daysToReport(days, 0), days);
+  assert.deepEqual(daysToReport(days, 1), ['2026-08-10', '2026-08-11']);
+  assert.deepEqual(daysToReport(days, 2), ['2026-08-10']);
+});
+
+test('задержка шире окна не оставляет спрашиваемых дней', () => {
+  // Бэкенд до такого не доводит (значение прижимается к «окно − 1»), но сама
+  // функция обязана вернуть пустой список, а не отрицательный срез.
+  assert.deepEqual(daysToReport(['2026-08-10', '2026-08-11'], 5), []);
+  assert.deepEqual(daysToReport(['2026-08-10'], -1), ['2026-08-10']);
 });

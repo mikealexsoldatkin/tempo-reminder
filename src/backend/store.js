@@ -24,8 +24,12 @@ const SECRET_KEY = {
 export const CREDENTIAL_NAMES = Object.keys(SECRET_KEY);
 
 export const DEFAULT_SETTINGS = {
-  // Сколько рабочих дней назад смотрим (окно [from..today]).
-  lookbackWorkingDays: 2,
+  // Сколько последних рабочих дней проверяем — время должно быть залогировано
+  // за каждый из них по отдельности, а не «хоть за какой-нибудь».
+  lookbackWorkingDays: 5,
+  // Сколько самых свежих рабочих дней окна прощаем: время за них ещё могут не
+  // успеть занести. 1 — сегодняшний день не спрашиваем.
+  acceptableDelayDays: 1,
   // В какие моменты суток (UTC) слать напоминания самим сотрудникам —
   // отсортированный список 'HH:MM'. Пустой список выключает эту рассылку.
   runTimes: ['09:00'],
@@ -34,18 +38,19 @@ export const DEFAULT_SETTINGS = {
   managerRunTimes: [],
   // Пропускать ли запуск по расписанию в субботу/воскресенье.
   skipWeekends: true,
-  // Плейсхолдеры: {from}, {to}, {days}, {name}.
+  // Плейсхолдеры: {from}, {to}, {days}, {name}, {missing} — пропущенные дни
+  // перечислением и {missingCount} — сколько их.
   messageTemplate:
-    ':clock3: Hi {name}! It looks like Tempo has no time entries from you for the last {days} working days ({from} — {to}). Please take a moment to log your time 🙏',
+    ':clock3: Hi {name}! Tempo has no time entries from you for {missingCount} of the last {days} working days: {missing}. Please take a moment to log your time 🙏',
   // То же плюс {count} — сколько подчинённых не отчиталось — и {list} — их имена
-  // построчно.
+  // построчно, каждое со своими пропущенными днями.
   managerMessageTemplate:
-    ':bar_chart: Hi {name}! {count} of the people you manage have no time entries in Tempo for the last {days} working days ({from} — {to}):\n{list}',
+    ':bar_chart: Hi {name}! {count} of the people you manage have days with no time entries in Tempo among the last {days} working days ({from} — {to}):\n{list}',
   // Уходит менеджеру, у которого отчитались все: рассылка идёт по всему списку
   // менеджеров, и молчание в этом случае неотличимо от сломавшегося приложения.
   // Плейсхолдеры: {from}, {to}, {days}, {name} и {count} — размер команды.
   managerAllClearTemplate:
-    ':white_check_mark: Hi {name}! Everyone you manage has logged their time in Tempo for the last {days} working days ({from} — {to}). Nothing to chase 🎉',
+    ':white_check_mark: Hi {name}! Everyone you manage has logged their time in Tempo for every one of the last {days} working days ({from} — {to}). Nothing to chase 🎉',
 };
 
 /* ---------------------------- настройки ---------------------------- */
@@ -87,9 +92,17 @@ function validateSettingsPatch(patch) {
 }
 
 function normalizeSettings(settings) {
-  const lookback = Number(settings.lookbackWorkingDays);
+  const lookbackWorkingDays = clampInt(settings.lookbackWorkingDays, 1, 30, DEFAULT_SETTINGS.lookbackWorkingDays);
   return {
-    lookbackWorkingDays: Number.isFinite(lookback) ? Math.min(Math.max(Math.trunc(lookback), 1), 30) : DEFAULT_SETTINGS.lookbackWorkingDays,
+    lookbackWorkingDays,
+    // Прощать всё окно целиком нельзя — тогда проверять было бы нечего, поэтому
+    // допустимая задержка всегда оставляет хотя бы один спрашиваемый день.
+    acceptableDelayDays: clampInt(
+      settings.acceptableDelayDays,
+      0,
+      lookbackWorkingDays - 1,
+      Math.min(DEFAULT_SETTINGS.acceptableDelayDays, lookbackWorkingDays - 1)
+    ),
     runTimes: parseRunTimes(settings.runTimes).times.slice(0, MAX_RUN_TIMES),
     managerRunTimes: parseRunTimes(settings.managerRunTimes).times.slice(0, MAX_RUN_TIMES),
     skipWeekends: Boolean(settings.skipWeekends),
@@ -101,6 +114,13 @@ function normalizeSettings(settings) {
       settings.managerAllClearTemplate || DEFAULT_SETTINGS.managerAllClearTemplate
     ).slice(0, 1000),
   };
+}
+
+/** Целое из формы: пустое поле или мусор дают дефолт, число прижимается к границам. */
+function clampInt(value, min, max, fallback) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return Math.min(Math.max(fallback, min), max);
+  return Math.min(Math.max(Math.trunc(number), min), max);
 }
 
 /* ------------------------------ списки людей ------------------------------ */

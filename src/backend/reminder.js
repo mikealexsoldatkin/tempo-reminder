@@ -10,9 +10,9 @@ import {
   saveLastReport,
   setRunStatus,
 } from './store.js';
-import { getWorklogAuthors, sleep } from './tempo.js';
+import { getWorklogDaysByAuthor, sleep } from './tempo.js';
 import { lookupSlackUserByEmail, sendSlackDm } from './slack.js';
-import { isWeekend, workingDayWindow } from './workdays.js';
+import { daysToReport, isWeekend, lastWorkingDays, windowOf } from './workdays.js';
 import {
   CATCH_UP_MINUTES,
   SCHEDULE_TIME_ZONE,
@@ -77,7 +77,24 @@ export async function runReminderCheck({ trigger, requestedBy = null, now = new 
     : { users: true, managers: true };
 
   const today = schedule?.date ?? dayParts(now).date;
-  const window = workingDayWindow(today, settings.lookbackWorkingDays);
+  // Проверяем каждый рабочий день окна по отдельности, но за самые свежие дни
+  // время ещё могут не успеть занести — их прощает «acceptable delay».
+  const checkedDays = lastWorkingDays(today, settings.lookbackWorkingDays);
+  const requiredDays = daysToReport(checkedDays, settings.acceptableDelayDays);
+  const window = windowOf(checkedDays);
+  // Настройки нормализуются на чтении и такого не допускают; проверка здесь на
+  // случай, если правило «задержка меньше окна» когда-нибудь ослабнет.
+  if (requiredDays.length === 0) {
+    return finish({
+      trigger,
+      requestedBy,
+      startedAt,
+      window,
+      status: 'skipped',
+      message: 'The acceptable delay covers the whole window — there is nothing to check',
+    }, schedule);
+  }
+
   const users = await getTrackedUsers();
   if (users.length === 0) {
     return finish({
@@ -108,13 +125,18 @@ export async function runReminderCheck({ trigger, requestedBy = null, now = new 
 
   console.log(
     `Прогон (${trigger}${schedule ? `, слоты ${describeDue(schedule.due)}` : ''}): ` +
-      `окно ${window.from}..${window.to}, отслеживается ${users.length} чел., ` +
+      `окно ${window.from}..${window.to} (${checkedDays.length} раб. дн.), ` +
+      `спрашиваем ${requiredDays.length}: ${requiredDays.join(', ')}; ` +
+      `отслеживается ${users.length} чел., ` +
       `рассылка: ${[targets.users && 'сотрудникам', targets.managers && 'менеджерам'].filter(Boolean).join(' и ') || '—'}`
   );
 
-  let authorsWithWorklogs;
+  // Тянем из Tempo только спрашиваемые дни: за прощённые записи всё равно не
+  // проверяются, а лишние страницы — это лишние запросы к шлюзу с rate limit'ом.
+  const fetchRange = windowOf(requiredDays);
+  let daysByAuthor;
   try {
-    authorsWithWorklogs = await getWorklogAuthors(window.from, window.to, tempoToken);
+    daysByAuthor = await getWorklogDaysByAuthor(fetchRange.from, fetchRange.to, tempoToken);
   } catch (e) {
     return finish({
       trigger,
@@ -125,15 +147,30 @@ export async function runReminderCheck({ trigger, requestedBy = null, now = new 
       message: `Couldn’t fetch worklogs from Tempo: ${e.message}`,
     }, schedule);
   }
-  console.log(`Tempo: ${authorsWithWorklogs.size} авторов с записями в окне`);
+  console.log(`Tempo: ${daysByAuthor.size} авторов с записями в окне`);
 
-  const unreported = users.filter((user) => !authorsWithWorklogs.has(user.accountId));
+  // Дни без записей у каждого отслеживаемого — считаем один раз: они нужны и для
+  // самих напоминаний, и для списка в дайджесте менеджеру, и для отчёта.
+  const missingDaysByUser = new Map(
+    users.map((user) => {
+      const reported = daysByAuthor.get(user.accountId) ?? new Set();
+      return [user.accountId, requiredDays.filter((day) => !reported.has(day))];
+    })
+  );
+  const unreported = users.filter((user) => missingDaysByUser.get(user.accountId).length > 0);
 
   const rows = targets.users
-    ? await remindUsers({ users, authorsWithWorklogs, window, settings, slackBotToken })
+    ? await remindUsers({ users, missingDaysByUser, requiredDays, window, settings, slackBotToken })
     : [];
   const managerRows = targets.managers
-    ? await notifyManagers({ users, unreported, window, settings, slackBotToken })
+    ? await notifyManagers({
+        users,
+        unreported,
+        missingDaysByUser,
+        window,
+        settings,
+        slackBotToken,
+      })
     : [];
 
   const totals = countUserOutcomes(rows);
@@ -150,6 +187,7 @@ export async function runReminderCheck({ trigger, requestedBy = null, now = new 
     requestedBy,
     startedAt,
     window,
+    requiredDays,
     status: 'ok',
     message: summarize(targets, totals, managerTotals, unreported.length),
     rows,
@@ -160,25 +198,39 @@ export async function runReminderCheck({ trigger, requestedBy = null, now = new 
 }
 
 /**
- * Напоминания самим сотрудникам: по одному DM каждому, у кого нет записей в окне.
+ * Напоминания самим сотрудникам: по одному DM каждому, у кого хотя бы за один
+ * спрашиваемый день нет записей в Tempo.
  */
-async function remindUsers({ users, authorsWithWorklogs, window, settings, slackBotToken }) {
+async function remindUsers({
+  users,
+  missingDaysByUser,
+  requiredDays,
+  window,
+  settings,
+  slackBotToken,
+}) {
   const rows = [];
   const slackIdsToCache = {};
 
   for (const user of users) {
-    if (authorsWithWorklogs.has(user.accountId)) {
-      rows.push(row(user, OUTCOME.logged, 'Has entries in Tempo'));
+    const missingDays = missingDaysByUser.get(user.accountId) ?? [];
+    if (missingDays.length === 0) {
+      rows.push(row(user, OUTCOME.logged, `Has entries for all ${requiredDays.length} checked days`));
       continue;
     }
 
     const text = renderUserMessage(settings.messageTemplate, {
       user,
+      missingDays,
       window,
       lookbackWorkingDays: settings.lookbackWorkingDays,
     });
     const sent = await dm(user, text, slackBotToken, slackIdsToCache);
-    rows.push(row(user, sent.outcome, sent.detail));
+    const detail =
+      sent.outcome === OUTCOME.reminded
+        ? `Reminder sent, no entries for: ${formatDays(missingDays)}`
+        : sent.detail;
+    rows.push(row(user, sent.outcome, detail));
   }
 
   await cacheSlackUserIds(slackIdsToCache);
@@ -191,7 +243,14 @@ async function remindUsers({ users, authorsWithWorklogs, window, settings, slack
  * что отчитались все. Молчание в этом случае неотличимо от сломавшейся рассылки,
  * поэтому пишем всем.
  */
-async function notifyManagers({ users, unreported, window, settings, slackBotToken }) {
+async function notifyManagers({
+  users,
+  unreported,
+  missingDaysByUser,
+  window,
+  settings,
+  slackBotToken,
+}) {
   const managers = await getManagers();
   if (managers.length === 0) return [];
 
@@ -217,6 +276,7 @@ async function notifyManagers({ users, unreported, window, settings, slackBotTok
       : renderManagerMessage(settings.managerMessageTemplate, {
           manager,
           people,
+          missingDaysByUser,
           window,
           lookbackWorkingDays: settings.lookbackWorkingDays,
         });
@@ -238,7 +298,7 @@ async function notifyManagers({ users, unreported, window, settings, slackBotTok
  * просто забыли проставить кому-то в колонке Managers.
  */
 function describeSent(people, managedCount) {
-  if (people.length > 0) return `Digest sent: ${people.map((p) => p.displayName).join(', ')}`;
+  if (people.length > 0) return `Digest sent about: ${people.map((p) => p.displayName).join(', ')}`;
   return managedCount > 0
     ? `All clear message sent: all ${managedCount} of their people have logged time`
     : 'All clear message sent, but nobody is assigned to this manager';
@@ -364,6 +424,16 @@ export function describeDue(due) {
   );
 }
 
+// Строку отчёта хранит KVS с лимитом на размер значения, поэтому длинный перечень
+// дней в ней сокращается; полный список человек видит в самом сообщении.
+const MAX_DAYS_IN_DETAIL = 5;
+
+function formatDays(days) {
+  if (days.length <= MAX_DAYS_IN_DETAIL) return days.join(', ');
+  const shown = days.slice(0, MAX_DAYS_IN_DETAIL).join(', ');
+  return `${shown} and ${days.length - MAX_DAYS_IN_DETAIL} more`;
+}
+
 function row(user, outcome, detail) {
   return {
     accountId: user.accountId,
@@ -410,7 +480,7 @@ function countManagerOutcomes(rows, unreported) {
 }
 
 function summarize(targets, totals, managerTotals, unreportedCount) {
-  const parts = [`${unreportedCount} of the tracked people have no entries`];
+  const parts = [`${unreportedCount} of the tracked people are missing at least one checked day`];
   if (targets.users) parts.push(`reminders sent: ${totals.reminded}`);
   if (targets.managers) {
     parts.push(
@@ -428,6 +498,8 @@ async function finish(report, schedule = null) {
     managerRows: [],
     managerTotals: { managers: 0, notified: 0, allClear: 0, failed: 0, skipped: 0, withoutManager: 0 },
     window: null,
+    // Дни, за которые время уже обязано быть залогировано — окно минус допустимая задержка.
+    requiredDays: [],
     ...report,
     finishedAt: new Date().toISOString(),
   };

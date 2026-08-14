@@ -54,23 +54,41 @@ export function countManagedPeople(users) {
   return counts;
 }
 
-export function renderUserMessage(template, { user, window, lookbackWorkingDays }) {
+/**
+ * @param template — шаблон
+ * @param {{ user: object, missingDays: string[], window: object, lookbackWorkingDays: number }} data
+ *   missingDays — дни окна, за которые у человека нет записей, от старых к свежим.
+ */
+export function renderUserMessage(template, { user, missingDays, window, lookbackWorkingDays }) {
   return fillPlaceholders(template, {
     name: firstName(user.displayName),
     from: window.from,
     to: window.to,
     days: String(lookbackWorkingDays),
+    missing: missingDays.join(', '),
+    missingCount: String(missingDays.length),
   });
 }
 
-export function renderManagerMessage(template, { manager, people, window, lookbackWorkingDays }) {
+/**
+ * @param template — шаблон
+ * @param {{ people: Array, missingDaysByUser: Map<string, string[]> }} data
+ *   в {list} каждый подчинённый идёт со своими пропущенными днями — без этого
+ *   менеджеру пришлось бы выяснять их у самого сотрудника.
+ */
+export function renderManagerMessage(
+  template,
+  { manager, people, missingDaysByUser, window, lookbackWorkingDays }
+) {
   return fillPlaceholders(template, {
     name: firstName(manager.displayName),
     from: window.from,
     to: window.to,
     days: String(lookbackWorkingDays),
     count: String(people.length),
-    list: people.map((person) => `• ${person.displayName}`).join('\n'),
+    list: people
+      .map((person) => `• ${person.displayName} — ${(missingDaysByUser.get(person.accountId) ?? []).join(', ')}`)
+      .join('\n'),
   });
 }
 
@@ -97,7 +115,7 @@ export function renderManagerAllClearMessage(
  * пришедший из данных (например, имя вида «{days}»), на следующем шаге.
  */
 function fillPlaceholders(template, values) {
-  return String(template).replace(/\{(name|from|to|days|count|list)}/g, (match, key) =>
+  return String(template).replace(/\{(name|from|to|days|count|list|missingCount|missing)}/g, (match, key) =>
     values[key] ?? match
   );
 }
