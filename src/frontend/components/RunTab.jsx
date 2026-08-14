@@ -23,6 +23,8 @@ import { api } from '../api';
 const OUTCOME_VIEW = {
   reminded: { appearance: 'inprogress', label: 'reminder sent' },
   logged: { appearance: 'success', label: 'time logged' },
+  notified: { appearance: 'inprogress', label: 'digest sent' },
+  'nothing-to-report': { appearance: 'success', label: 'nothing to report' },
   'no-email': { appearance: 'removed', label: 'no email' },
   'no-slack': { appearance: 'removed', label: 'not in Slack' },
   error: { appearance: 'removed', label: 'error' },
@@ -143,7 +145,8 @@ export const RunTab = ({ runStatus, lastReport, trackedCount, credentials, onRun
             <ModalBody>
               <Text>
                 Real Slack messages will be sent to every tracked user (currently {trackedCount})
-                who has no Tempo entries within the check window.
+                who has no Tempo entries within the check window, and their managers will get the
+                digest. A manual run ignores both schedules and sends everything.
               </Text>
             </ModalBody>
             <ModalFooter>
@@ -211,6 +214,65 @@ const LastReport = ({ report }) => {
       </Text>
       {report.truncatedRows > 0 && (
         <Text>Not all rows are shown: {report.truncatedRows} more hidden, see the full list in `forge logs`.</Text>
+      )}
+      {rows.length > 0 && (
+        <Box>
+          <DynamicTable head={head} rows={rows} rowsPerPage={20} />
+        </Box>
+      )}
+
+      <ManagerDigests report={report} />
+    </Stack>
+  );
+};
+
+/**
+ * Что ушло менеджерам. Отдельной таблицей, а не строками в общей: получатель здесь
+ * менеджер, а колонка «сколько подчинённых» осмысленна только для него.
+ */
+const ManagerDigests = ({ report }) => {
+  const totals = report.managerTotals;
+  const managerRows = report.managerRows ?? [];
+  if (!totals || (managerRows.length === 0 && !totals.withoutManager)) return null;
+
+  const head = {
+    cells: [
+      { key: 'name', content: 'Manager' },
+      { key: 'people', content: 'People to report' },
+      { key: 'outcome', content: 'Outcome' },
+      { key: 'detail', content: 'Details' },
+    ],
+  };
+  const rows = managerRows.map((row) => {
+    const view = OUTCOME_VIEW[row.outcome] ?? { appearance: 'default', label: row.outcome };
+    return {
+      key: row.accountId,
+      cells: [
+        { key: 'name', content: <Text>{row.displayName}</Text> },
+        { key: 'people', content: <Text>{String(row.reportedCount ?? 0)}</Text> },
+        { key: 'outcome', content: <Lozenge appearance={view.appearance}>{view.label}</Lozenge> },
+        { key: 'detail', content: <Text>{row.detail}</Text> },
+      ],
+    };
+  });
+
+  return (
+    <Stack space="space.100">
+      <Heading as="h4" size="small">Manager digests</Heading>
+      <Text>
+        Managers: {totals.managers}, digests sent: {totals.notified}, nothing to report:{' '}
+        {totals.nothingToReport}, errors: {totals.failed}
+      </Text>
+      {totals.withoutManager > 0 && (
+        <SectionMessage appearance="warning">
+          <Text>
+            {totals.withoutManager} of the people without Tempo entries have no manager assigned —
+            nobody was told about them. Fill in the Managers column on the Users tab.
+          </Text>
+        </SectionMessage>
+      )}
+      {report.truncatedManagerRows > 0 && (
+        <Text>Not all rows are shown: {report.truncatedManagerRows} more hidden.</Text>
       )}
       {rows.length > 0 && (
         <Box>

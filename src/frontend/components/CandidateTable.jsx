@@ -3,20 +3,31 @@ import { Box, Checkbox, DynamicTable, Inline, Lozenge, Text } from '@forge/react
 
 /**
  * Таблица результатов поиска с чекбоксами — общая для поиска по имени и по проекту.
+ * Показывает, в каком из двух списков человек уже есть: отмеченного можно поставить
+ * под наблюдение, назначить менеджером или и то, и другое.
  */
-export const CandidateTable = ({ candidates, selected, onToggle, trackedIds, showRoles = false }) => {
+export const CandidateTable = ({
+  candidates,
+  selected,
+  onToggle,
+  trackedIds,
+  managerIds,
+  showRoles = false,
+}) => {
   const head = {
     cells: [
       { key: 'select', content: '', width: 5 },
       { key: 'name', content: 'Name' },
       { key: 'email', content: 'Email' },
       ...(showRoles ? [{ key: 'roles', content: 'Project roles' }] : []),
-      { key: 'status', content: 'Status' },
+      { key: 'status', content: 'Tracked' },
+      { key: 'manager', content: 'Manager' },
     ],
   };
 
   const rows = candidates.map((candidate) => {
     const isTracked = trackedIds.has(candidate.accountId);
+    const isManager = managerIds.has(candidate.accountId);
     return {
       key: candidate.accountId,
       cells: [
@@ -25,7 +36,6 @@ export const CandidateTable = ({ candidates, selected, onToggle, trackedIds, sho
           content: (
             <Checkbox
               isChecked={selected.has(candidate.accountId)}
-              isDisabled={isTracked}
               onChange={() => onToggle(candidate.accountId)}
               label=""
             />
@@ -40,7 +50,15 @@ export const CandidateTable = ({ candidates, selected, onToggle, trackedIds, sho
           key: 'status',
           content: (
             <Lozenge appearance={isTracked ? 'success' : 'default'}>
-              {isTracked ? 'already tracked' : 'not tracked'}
+              {isTracked ? 'tracked' : 'not tracked'}
+            </Lozenge>
+          ),
+        },
+        {
+          key: 'manager',
+          content: (
+            <Lozenge appearance={isManager ? 'success' : 'default'}>
+              {isManager ? 'manager' : '—'}
             </Lozenge>
           ),
         },

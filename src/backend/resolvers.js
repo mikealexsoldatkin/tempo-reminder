@@ -5,18 +5,23 @@ import { testSlackToken } from './slack.js';
 import { enqueueRun } from './runQueue.js';
 import { describeSchedule } from './reminder.js';
 import {
+  addManagers,
   addTrackedUsers,
   clearCredential,
   getCredentials,
   getCredentialsStatus,
   getLastReport,
+  getManagers,
   getRunStatus,
   getSettings,
   getTrackedUsers,
+  removeManagers,
   removeTrackedUsers,
   saveCredential,
   saveSettings,
+  setManagerEmail,
   setTrackedUserEmail,
+  setTrackedUserManagers,
 } from './store.js';
 
 // Собираем обработчики в объект и отдаём их в makeResolver, а не в `new Resolver()`:
@@ -44,9 +49,10 @@ function define(key, handler) {
 
 /** Полное состояние страницы настроек за один вызов. */
 define('getState', async () => {
-  const [settings, trackedUsers, credentials, runStatus, lastReport] = await Promise.all([
+  const [settings, trackedUsers, managers, credentials, runStatus, lastReport] = await Promise.all([
     getSettings(),
     getTrackedUsers(),
+    getManagers(),
     getCredentialsStatus(),
     getRunStatus(),
     getLastReport(),
@@ -54,6 +60,7 @@ define('getState', async () => {
   return {
     settings,
     trackedUsers,
+    managers,
     credentials,
     runStatus,
     lastReport,
@@ -75,6 +82,21 @@ define('removeTrackedUsers', async ({ payload }) => ({
 
 define('setTrackedUserEmail', async ({ payload }) => ({
   users: await setTrackedUserEmail(payload?.accountId, payload?.email),
+}));
+
+define('setTrackedUserManagers', async ({ payload }) => ({
+  users: await setTrackedUserManagers(payload?.accountId, payload?.managerIds ?? []),
+}));
+
+/* --------------------------------- менеджеры --------------------------------- */
+
+define('addManagers', ({ payload }) => addManagers(payload?.users ?? []));
+
+// Удаление менеджера правит и записи подчинённых, поэтому возвращаем оба списка.
+define('removeManagers', ({ payload }) => removeManagers(payload?.accountIds ?? []));
+
+define('setManagerEmail', async ({ payload }) => ({
+  managers: await setManagerEmail(payload?.accountId, payload?.email),
 }));
 
 /* ------------------------------ токены и настройки ------------------------------ */

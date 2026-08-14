@@ -17,6 +17,11 @@ export const api = {
   addTrackedUsers: (users) => call('addTrackedUsers', { users }),
   removeTrackedUsers: (accountIds) => call('removeTrackedUsers', { accountIds }),
   setTrackedUserEmail: (accountId, email) => call('setTrackedUserEmail', { accountId, email }),
+  setTrackedUserManagers: (accountId, managerIds) =>
+    call('setTrackedUserManagers', { accountId, managerIds }),
+  addManagers: (users) => call('addManagers', { users }),
+  removeManagers: (accountIds) => call('removeManagers', { accountIds }),
+  setManagerEmail: (accountId, email) => call('setManagerEmail', { accountId, email }),
   saveCredential: (name, value) => call('saveCredential', { name, value }),
   clearCredential: (name) => call('clearCredential', { name }),
   testConnections: () => call('testConnections'),

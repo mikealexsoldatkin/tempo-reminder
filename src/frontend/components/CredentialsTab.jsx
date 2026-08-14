@@ -34,7 +34,11 @@ const CREDENTIALS = [
  * бэкенд принимает и то, и другое, поэтому форма держит строку и не пытается
  * разбирать ввод на лету: нормализацию делает сервер и возвращает результат.
  */
-const toForm = (settings) => ({ ...settings, runTimes: (settings.runTimes ?? []).join(', ') });
+const toForm = (settings) => ({
+  ...settings,
+  runTimes: (settings.runTimes ?? []).join(', '),
+  managerRunTimes: (settings.managerRunTimes ?? []).join(', '),
+});
 
 /**
  * Токены хранятся в секретном хранилище Forge (kvs.setSecret) и наружу не отдаются:
@@ -195,19 +199,35 @@ export const CredentialsTab = ({
         />
         <HelperMessage>The check window is the last N working days, including today.</HelperMessage>
 
-        <Label labelFor="run-times">Run times</Label>
-        <Textfield
-          id="run-times"
-          width={320}
-          value={form.runTimes}
-          placeholder="09:00, 15:00"
-          onChange={(e) => setForm((prev) => ({ ...prev, runTimes: e.target.value }))}
-        />
+        <Inline space="space.200" alignBlock="start">
+          <Stack space="space.050">
+            <Label labelFor="run-times">Run times</Label>
+            <Textfield
+              id="run-times"
+              width={260}
+              value={form.runTimes}
+              placeholder="09:00, 15:00"
+              onChange={(e) => setForm((prev) => ({ ...prev, runTimes: e.target.value }))}
+            />
+            <HelperMessage>Reminders to the tracked people themselves.</HelperMessage>
+          </Stack>
+          <Stack space="space.050">
+            <Label labelFor="manager-run-times">Manager run times</Label>
+            <Textfield
+              id="manager-run-times"
+              width={260}
+              value={form.managerRunTimes}
+              placeholder="17:00"
+              onChange={(e) => setForm((prev) => ({ ...prev, managerRunTimes: e.target.value }))}
+            />
+            <HelperMessage>Digests to managers. Independent of the schedule on the left.</HelperMessage>
+          </Stack>
+        </Inline>
         <HelperMessage>
           24-hour clock in UTC, comma-separated. Each time fires at most once a day. The scheduled
           trigger wakes up once an hour, so a check starts at the first wake-up after the time you
           set{scheduleInfo?.catchUpMinutes ? `, and is dropped if that turns out to be more than ${scheduleInfo.catchUpMinutes} minutes late` : ''}.
-          Leave the field empty to turn scheduled checks off — the Run check tab still works.
+          An empty field turns that mailing off — the Run check tab still sends both.
         </HelperMessage>
 
         {scheduleInfo && (
@@ -215,8 +235,11 @@ export const CredentialsTab = ({
             <Text>
               Now in {scheduleInfo.timeZone}: {scheduleInfo.now}.{' '}
               {scheduleInfo.nextRun
-                ? `Next scheduled check: ${scheduleInfo.nextRun}.`
-                : 'No scheduled checks — the run times list is empty.'}
+                ? `Next reminders: ${scheduleInfo.nextRun}.`
+                : 'Reminders to people are off — the run times list is empty.'}{' '}
+              {scheduleInfo.nextManagerRun
+                ? `Next manager digests: ${scheduleInfo.nextManagerRun}.`
+                : 'Manager digests are off — the manager run times list is empty.'}
             </Text>
           </SectionMessage>
         )}
@@ -227,13 +250,35 @@ export const CredentialsTab = ({
           onChange={(e) => setForm((prev) => ({ ...prev, skipWeekends: e.target.checked }))}
         />
 
-        <Label labelFor="template">Reminder text</Label>
-        <TextArea
-          id="template"
-          value={form.messageTemplate}
-          onChange={(e) => setForm((prev) => ({ ...prev, messageTemplate: e.target.value }))}
-        />
-        <HelperMessage>Placeholders: {'{name}'}, {'{from}'}, {'{to}'}, {'{days}'}.</HelperMessage>
+        <Inline space="space.200" alignBlock="start">
+          <Stack space="space.050">
+            <Label labelFor="template">Reminder text</Label>
+            <TextArea
+              id="template"
+              value={form.messageTemplate}
+              onChange={(e) => setForm((prev) => ({ ...prev, messageTemplate: e.target.value }))}
+            />
+            <HelperMessage>
+              Sent to the person who didn’t log time. Placeholders: {'{name}'}, {'{from}'},{' '}
+              {'{to}'}, {'{days}'}.
+            </HelperMessage>
+          </Stack>
+          <Stack space="space.050">
+            <Label labelFor="manager-template">Manager reminder text</Label>
+            <TextArea
+              id="manager-template"
+              value={form.managerMessageTemplate}
+              onChange={(e) =>
+                setForm((prev) => ({ ...prev, managerMessageTemplate: e.target.value }))
+              }
+            />
+            <HelperMessage>
+              Sent to each manager. The same placeholders plus {'{count}'} — how many of their
+              people didn’t log time — and {'{list}'} — their names, one per line. {'{name}'} is the
+              manager’s own name.
+            </HelperMessage>
+          </Stack>
+        </Inline>
 
         <Inline space="space.100">
           <LoadingButton appearance="primary" isLoading={isSavingSettings} onClick={saveSettings}>

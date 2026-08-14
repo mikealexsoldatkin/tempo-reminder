@@ -1,7 +1,9 @@
 import {
+  cacheManagerSlackUserIds,
   cacheSlackUserIds,
   getCredentials,
   getHandledRunTimes,
+  getManagers,
   getSettings,
   getTrackedUsers,
   markRunTimesHandled,
@@ -19,14 +21,28 @@ import {
   formatClock,
   nextRunTime,
 } from './schedule.js';
+import {
+  countWithoutManager,
+  groupByManager,
+  renderManagerMessage,
+  renderUserMessage,
+} from './notifications.js';
 
 export const OUTCOME = {
   reminded: 'reminded',
   logged: 'logged',
+  notified: 'notified',
+  nothingToReport: 'nothing-to-report',
   noEmail: 'no-email',
   noSlack: 'no-slack',
   error: 'error',
 };
+
+/**
+ * Две независимые рассылки с раздельными расписаниями: напоминания самим
+ * сотрудникам и дайджесты их менеджерам.
+ */
+export const RUN_KIND = { users: 'users', managers: 'managers' };
 
 // Паузы, чтобы не упереться в rate limit Slack (lookupByEmail — Tier 3, postMessage — ~1 msg/s).
 const SLACK_LOOKUP_PAUSE_MS = 200;
@@ -34,7 +50,9 @@ const SLACK_SEND_PAUSE_MS = 300;
 
 /**
  * Один прогон проверки: кто из отслеживаемых пользователей не репортился в Tempo
- * за последние N рабочих дней — тому DM в Slack.
+ * за последние N рабочих дней. Такому человеку уходит DM, а его менеджерам —
+ * дайджест со списком подчинённых. Что именно рассылать, решает расписание;
+ * ручной запуск делает и то, и другое.
  *
  * @param {{ trigger: 'schedule'|'manual', requestedBy?: string|null, now?: Date }} options
  */
@@ -48,6 +66,13 @@ export async function runReminderCheck({ trigger, requestedBy = null, now = new 
   if (schedule && !schedule.shouldRun) {
     return finish({ trigger, requestedBy, startedAt, status: 'skipped', message: schedule.reason });
   }
+
+  const targets = schedule
+    ? {
+        users: schedule.due[RUN_KIND.users].length > 0,
+        managers: schedule.due[RUN_KIND.managers].length > 0,
+      }
+    : { users: true, managers: true };
 
   const today = schedule?.date ?? dayParts(now).date;
   const window = workingDayWindow(today, settings.lookbackWorkingDays);
@@ -80,8 +105,9 @@ export async function runReminderCheck({ trigger, requestedBy = null, now = new 
   }
 
   console.log(
-    `Прогон (${trigger}${schedule ? `, слоты ${schedule.dueTimes.join(', ')}` : ''}): ` +
-      `окно ${window.from}..${window.to}, отслеживается ${users.length} чел.`
+    `Прогон (${trigger}${schedule ? `, слоты ${describeDue(schedule.due)}` : ''}): ` +
+      `окно ${window.from}..${window.to}, отслеживается ${users.length} чел., ` +
+      `рассылка: ${[targets.users && 'сотрудникам', targets.managers && 'менеджерам'].filter(Boolean).join(' и ') || '—'}`
   );
 
   let authorsWithWorklogs;
@@ -99,6 +125,42 @@ export async function runReminderCheck({ trigger, requestedBy = null, now = new 
   }
   console.log(`Tempo: ${authorsWithWorklogs.size} авторов с записями в окне`);
 
+  const unreported = users.filter((user) => !authorsWithWorklogs.has(user.accountId));
+
+  const rows = targets.users
+    ? await remindUsers({ users, authorsWithWorklogs, window, settings, slackBotToken })
+    : [];
+  const managerRows = targets.managers
+    ? await notifyManagers({ unreported, window, settings, slackBotToken })
+    : [];
+
+  const totals = countUserOutcomes(rows);
+  // Если дайджесты в этот прогон не рассылались, счётчик «без менеджера» тоже
+  // не считаем: иначе отчёт о рассылке сотрудникам предупреждал бы о менеджерах.
+  const managerTotals = countManagerOutcomes(managerRows, targets.managers ? unreported : []);
+  console.log(
+    `Готово. Напоминаний: ${totals.reminded}, дайджестов: ${managerTotals.notified}, ` +
+      `ошибок: ${totals.failed + managerTotals.failed}`
+  );
+
+  return finish({
+    trigger,
+    requestedBy,
+    startedAt,
+    window,
+    status: 'ok',
+    message: summarize(targets, totals, managerTotals, unreported.length),
+    rows,
+    totals,
+    managerRows,
+    managerTotals,
+  }, schedule);
+}
+
+/**
+ * Напоминания самим сотрудникам: по одному DM каждому, у кого нет записей в окне.
+ */
+async function remindUsers({ users, authorsWithWorklogs, window, settings, slackBotToken }) {
   const rows = [];
   const slackIdsToCache = {};
 
@@ -108,53 +170,95 @@ export async function runReminderCheck({ trigger, requestedBy = null, now = new 
       continue;
     }
 
-    if (!user.email) {
-      rows.push(row(user, OUTCOME.noEmail, 'No email — the Slack user can’t be found. Set the email manually in the settings'));
-      continue;
-    }
-
-    try {
-      let slackUserId = user.slackUserId;
-      if (!slackUserId) {
-        slackUserId = await lookupSlackUserByEmail(user.email, slackBotToken);
-        await sleep(SLACK_LOOKUP_PAUSE_MS);
-        if (!slackUserId) {
-          rows.push(row(user, OUTCOME.noSlack, `No Slack user with email ${user.email}`));
-          continue;
-        }
-        slackIdsToCache[user.accountId] = slackUserId;
-      }
-
-      await sendSlackDm(slackUserId, renderMessage(settings.messageTemplate, user, window, settings), slackBotToken);
-      await sleep(SLACK_SEND_PAUSE_MS);
-      rows.push(row(user, OUTCOME.reminded, 'Reminder sent'));
-    } catch (e) {
-      console.error(`Ошибка для ${user.accountId}: ${e.message}`);
-      rows.push(row(user, OUTCOME.error, e.message));
-    }
+    const text = renderUserMessage(settings.messageTemplate, {
+      user,
+      window,
+      lookbackWorkingDays: settings.lookbackWorkingDays,
+    });
+    const sent = await dm(user, text, slackBotToken, slackIdsToCache);
+    rows.push(row(user, sent.outcome, sent.detail));
   }
 
   await cacheSlackUserIds(slackIdsToCache);
-
-  const totals = countOutcomes(rows);
-  console.log(`Готово. Отправлено: ${totals.reminded}, ошибок: ${totals.failed}`);
-
-  return finish({
-    trigger,
-    requestedBy,
-    startedAt,
-    window,
-    status: 'ok',
-    message: `Checked ${rows.length} people, reminders sent: ${totals.reminded}`,
-    rows,
-    totals,
-  }, schedule);
+  return rows;
 }
 
 /**
- * Пора ли запускать плановую проверку прямо сейчас.
+ * Дайджесты менеджерам: одно сообщение со списком тех подчинённых, кто не отчитался.
+ * Менеджеры, у которых отчитались все, получают строку в отчёте, но не сообщение.
+ */
+async function notifyManagers({ unreported, window, settings, slackBotToken }) {
+  const managers = await getManagers();
+  if (managers.length === 0) return [];
+
+  const withPeople = new Map(
+    groupByManager(unreported, managers).map(({ manager, people }) => [manager.accountId, people])
+  );
+  const rows = [];
+  const slackIdsToCache = {};
+
+  for (const manager of managers) {
+    const people = withPeople.get(manager.accountId) ?? [];
+    if (people.length === 0) {
+      rows.push(managerRow(manager, 0, OUTCOME.nothingToReport, 'Everyone they manage has logged time'));
+      continue;
+    }
+
+    const text = renderManagerMessage(settings.managerMessageTemplate, {
+      manager,
+      people,
+      window,
+      lookbackWorkingDays: settings.lookbackWorkingDays,
+    });
+    const sent = await dm(manager, text, slackBotToken, slackIdsToCache);
+    const detail =
+      sent.outcome === OUTCOME.reminded
+        ? `Digest sent: ${people.map((p) => p.displayName).join(', ')}`
+        : sent.detail;
+    const outcome = sent.outcome === OUTCOME.reminded ? OUTCOME.notified : sent.outcome;
+    rows.push(managerRow(manager, people.length, outcome, detail));
+  }
+
+  await cacheManagerSlackUserIds(slackIdsToCache);
+  return rows;
+}
+
+/**
+ * Отправка одного DM: поиск человека в Slack по email (с кэшированием id) и сообщение.
+ * Ошибка на одном получателе не роняет прогон — она превращается в строку отчёта.
+ */
+async function dm(person, text, slackBotToken, slackIdsToCache) {
+  if (!person.email) {
+    return {
+      outcome: OUTCOME.noEmail,
+      detail: 'No email — the Slack user can’t be found. Set the email manually in the settings',
+    };
+  }
+
+  try {
+    let slackUserId = person.slackUserId;
+    if (!slackUserId) {
+      slackUserId = await lookupSlackUserByEmail(person.email, slackBotToken);
+      await sleep(SLACK_LOOKUP_PAUSE_MS);
+      if (!slackUserId) {
+        return { outcome: OUTCOME.noSlack, detail: `No Slack user with email ${person.email}` };
+      }
+      slackIdsToCache[person.accountId] = slackUserId;
+    }
+
+    await sendSlackDm(slackUserId, text, slackBotToken);
+    await sleep(SLACK_SEND_PAUSE_MS);
+    return { outcome: OUTCOME.reminded, detail: 'Reminder sent' };
+  } catch (e) {
+    console.error(`Ошибка для ${person.accountId}: ${e.message}`);
+    return { outcome: OUTCOME.error, detail: e.message };
+  }
+}
+
+/**
+ * Пора ли запускать плановую проверку прямо сейчас — отдельно для каждой рассылки.
  *
- * Триггер будит функцию раз в час, а расписание задаётся списком времён в настройках —
+ * Триггер будит функцию раз в час, а расписания задаются списками времён в настройках,
  * значит решение принимается здесь. Слот считается наступившим, если его время уже
  * прошло (но не больше чем на CATCH_UP_MINUTES) и он ещё не отработал в текущих сутках.
  *
@@ -163,58 +267,80 @@ export async function runReminderCheck({ trigger, requestedBy = null, now = new 
  */
 export async function evaluateSchedule(settings, now = new Date()) {
   const { date, minutes } = dayParts(now);
-  const idle = (reason) => ({ shouldRun: false, date, dueTimes: [], reason });
+  const empty = { [RUN_KIND.users]: [], [RUN_KIND.managers]: [] };
 
-  if (settings.runTimes.length === 0) {
-    return idle('No run times are configured — scheduled checks are off');
+  if (settings.runTimes.length === 0 && settings.managerRunTimes.length === 0) {
+    return { shouldRun: false, date, due: empty, reason: 'No run times are configured — scheduled checks are off' };
   }
   if (settings.skipWeekends && isWeekend(date)) {
-    return idle('Weekend — the scheduled run was skipped');
+    return { shouldRun: false, date, due: empty, reason: 'Weekend — the scheduled run was skipped' };
   }
 
-  const dueTimes = dueRunTimes({
-    runTimes: settings.runTimes,
-    nowMinutes: minutes,
-    handledTimes: await getHandledRunTimes(date),
+  const due = {
+    [RUN_KIND.users]: await dueFor(settings.runTimes, RUN_KIND.users, date, minutes),
+    [RUN_KIND.managers]: await dueFor(settings.managerRunTimes, RUN_KIND.managers, date, minutes),
+  };
+  if (due[RUN_KIND.users].length === 0 && due[RUN_KIND.managers].length === 0) {
+    return {
+      shouldRun: false,
+      date,
+      due,
+      reason: `It’s ${formatClock(minutes)} ${SCHEDULE_TIME_ZONE} — no run time is due, the scheduled run was skipped`,
+    };
+  }
+
+  return { shouldRun: true, date, due, reason: null };
+}
+
+async function dueFor(runTimes, kind, date, nowMinutes) {
+  if (runTimes.length === 0) return [];
+  return dueRunTimes({
+    runTimes,
+    nowMinutes,
+    handledTimes: await getHandledRunTimes(date, kind),
     catchUpMinutes: CATCH_UP_MINUTES,
   });
-  if (dueTimes.length === 0) {
-    return idle(
-      `It’s ${formatClock(minutes)} ${SCHEDULE_TIME_ZONE} — no run time is due, the scheduled run was skipped`
-    );
-  }
-
-  return { shouldRun: true, date, dueTimes, reason: null };
 }
 
 /**
- * Для страницы настроек: текущее время и ближайший запланированный запуск.
+ * Для страницы настроек: текущее время и ближайший запуск каждой из рассылок.
  */
 export async function describeSchedule(settings, now = new Date()) {
   const { date, minutes } = dayParts(now);
-  const next = nextRunTime({
-    runTimes: settings.runTimes,
-    skipWeekends: settings.skipWeekends,
-    today: date,
-    nowMinutes: minutes,
-    handledTimes: await getHandledRunTimes(date),
-  });
+
+  const next = async (runTimes, kind) =>
+    nextRunTime({
+      runTimes,
+      skipWeekends: settings.skipWeekends,
+      today: date,
+      nowMinutes: minutes,
+      handledTimes: await getHandledRunTimes(date, kind),
+    });
+
+  const [users, managers] = await Promise.all([
+    next(settings.runTimes, RUN_KIND.users),
+    next(settings.managerRunTimes, RUN_KIND.managers),
+  ]);
 
   return {
     timeZone: SCHEDULE_TIME_ZONE,
     now: `${date} ${formatClock(minutes)}`,
-    nextRun: next ? `${next.date} ${next.time}` : null,
+    nextRun: users ? `${users.date} ${users.time}` : null,
+    nextManagerRun: managers ? `${managers.date} ${managers.time}` : null,
     catchUpMinutes: CATCH_UP_MINUTES,
   };
 }
 
-function renderMessage(template, user, window, settings) {
-  const firstName = user.displayName.split(' ')[0];
-  return template
-    .replaceAll('{name}', firstName)
-    .replaceAll('{from}', window.from)
-    .replaceAll('{to}', window.to)
-    .replaceAll('{days}', String(settings.lookbackWorkingDays));
+/** Наступившие слоты одной строкой — для логов планового запуска. */
+export function describeDue(due) {
+  return (
+    [
+      due[RUN_KIND.users].length > 0 && `сотрудники ${due[RUN_KIND.users].join(', ')}`,
+      due[RUN_KIND.managers].length > 0 && `менеджеры ${due[RUN_KIND.managers].join(', ')}`,
+    ]
+      .filter(Boolean)
+      .join('; ') || '—'
+  );
 }
 
 function row(user, outcome, detail) {
@@ -227,7 +353,11 @@ function row(user, outcome, detail) {
   };
 }
 
-function countOutcomes(rows) {
+function managerRow(manager, reportedCount, outcome, detail) {
+  return { ...row(manager, outcome, detail), reportedCount };
+}
+
+function countUserOutcomes(rows) {
   const totals = { tracked: rows.length, logged: 0, reminded: 0, skipped: 0, failed: 0 };
   for (const { outcome } of rows) {
     if (outcome === OUTCOME.logged) totals.logged++;
@@ -238,21 +368,55 @@ function countOutcomes(rows) {
   return totals;
 }
 
+function countManagerOutcomes(rows, unreported) {
+  const totals = {
+    managers: rows.length,
+    notified: 0,
+    nothingToReport: 0,
+    failed: 0,
+    skipped: 0,
+    // Не отчитавшиеся, которым не назначен ни один менеджер: о них не узнает никто,
+    // и это стоит видеть в отчёте, а не выяснять по факту тишины.
+    withoutManager: countWithoutManager(unreported),
+  };
+  for (const { outcome } of rows) {
+    if (outcome === OUTCOME.notified) totals.notified++;
+    else if (outcome === OUTCOME.nothingToReport) totals.nothingToReport++;
+    else if (outcome === OUTCOME.error) totals.failed++;
+    else totals.skipped++;
+  }
+  return totals;
+}
+
+function summarize(targets, totals, managerTotals, unreportedCount) {
+  const parts = [`${unreportedCount} of the tracked people have no entries`];
+  if (targets.users) parts.push(`reminders sent: ${totals.reminded}`);
+  if (targets.managers) parts.push(`manager digests sent: ${managerTotals.notified}`);
+  if (!targets.users && !targets.managers) parts.push('nothing was sent');
+  return parts.join(', ');
+}
+
 async function finish(report, schedule = null) {
   const full = {
     rows: [],
     totals: { tracked: 0, logged: 0, reminded: 0, skipped: 0, failed: 0 },
+    managerRows: [],
+    managerTotals: { managers: 0, notified: 0, nothingToReport: 0, failed: 0, skipped: 0, withoutManager: 0 },
     window: null,
     ...report,
     finishedAt: new Date().toISOString(),
   };
   const saved = await saveLastReport(full);
+
   // Слоты закрываются только после успеха: если Tempo или Slack не ответили,
   // слот остаётся наступившим и следующее часовое срабатывание повторит попытку
   // — но лишь пока не вышло окно CATCH_UP_MINUTES.
-  if (full.status === 'ok' && schedule?.dueTimes?.length) {
-    await markRunTimesHandled(schedule.date, schedule.dueTimes);
+  if (full.status === 'ok' && schedule) {
+    for (const kind of Object.values(RUN_KIND)) {
+      if (schedule.due[kind].length > 0) await markRunTimesHandled(schedule.date, kind, schedule.due[kind]);
+    }
   }
+
   await setRunStatus({ state: 'idle', lastTrigger: full.trigger, lastStatus: full.status });
   if (full.status !== 'ok') console.log(`Прогон завершён со статусом ${full.status}: ${full.message}`);
   return saved;

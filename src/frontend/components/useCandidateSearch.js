@@ -1,14 +1,21 @@
 import { useCallback, useState } from 'react';
 
 /**
- * Общая механика «нашли кандидатов → отметили галочками → добавили батчем»
- * для поиска по имени и для поиска по ключу проекта.
+ * Общая механика «нашли кандидатов → отметили галочками → отправили батчем»
+ * для поиска по имени и по ключу проекта.
+ *
+ * Действий над выделенным может быть несколько (добавить в отслеживаемые,
+ * назначить менеджером), поэтому они передаются словарём и различаются ключом.
+ * Каждое действие само возвращает текст об успехе — формулировки у них разные.
+ *
+ * @param {{ search: (input: string) => Promise<any>,
+ *           actions: Record<string, (chosen: Array) => Promise<string>> }} config
  */
-export const useCandidateSearch = ({ search, add }) => {
+export const useCandidateSearch = ({ search, actions }) => {
   const [candidates, setCandidates] = useState(null);
   const [selected, setSelected] = useState(new Set());
   const [isSearching, setIsSearching] = useState(false);
-  const [isAdding, setIsAdding] = useState(false);
+  const [busyAction, setBusyAction] = useState(null);
   const [message, setMessage] = useState(null);
 
   const runSearch = useCallback(
@@ -55,46 +62,45 @@ export const useCandidateSearch = ({ search, add }) => {
     });
   }, []);
 
-  const selectAll = useCallback(
-    (trackedIds) => {
-      setSelected(
-        new Set((candidates ?? []).filter((c) => !trackedIds.has(c.accountId)).map((c) => c.accountId))
-      );
-    },
-    [candidates]
-  );
+  // Без исключений: действий над выделенным теперь два, и «уже отслеживаемый»
+  // ничего не говорит о том, годится ли человек в менеджеры. Повторное добавление
+  // безопасно — бэкенд считает такие записи пропущенными.
+  const selectAll = useCallback(() => {
+    setSelected(new Set((candidates ?? []).map((c) => c.accountId)));
+  }, [candidates]);
 
   const clearSelection = useCallback(() => setSelected(new Set()), []);
 
-  const addSelected = useCallback(async () => {
-    const chosen = (candidates ?? []).filter((c) => selected.has(c.accountId));
-    if (chosen.length === 0) return;
-    setIsAdding(true);
-    setMessage(null);
-    try {
-      const result = await add(chosen);
-      setSelected(new Set());
-      setMessage({
-        appearance: 'success',
-        text: `Added: ${result.added}${result.skipped > 0 ? `, already tracked: ${result.skipped}` : ''}`,
-      });
-    } catch (e) {
-      setMessage({ appearance: 'error', text: e.message });
-    } finally {
-      setIsAdding(false);
-    }
-  }, [add, candidates, selected]);
+  const submitSelected = useCallback(
+    async (actionKey) => {
+      const chosen = (candidates ?? []).filter((c) => selected.has(c.accountId));
+      if (chosen.length === 0) return;
+
+      setBusyAction(actionKey);
+      setMessage(null);
+      try {
+        const text = await actions[actionKey](chosen);
+        setSelected(new Set());
+        setMessage({ appearance: 'success', text });
+      } catch (e) {
+        setMessage({ appearance: 'error', text: e.message });
+      } finally {
+        setBusyAction(null);
+      }
+    },
+    [actions, candidates, selected]
+  );
 
   return {
     candidates,
     selected,
     isSearching,
-    isAdding,
+    busyAction,
     message,
     runSearch,
     toggle,
     selectAll,
     clearSelection,
-    addSelected,
+    submitSelected,
   };
 };

@@ -1,6 +1,6 @@
 import { handler as adminResolver } from './backend/resolvers.js';
 import { enqueueRun } from './backend/runQueue.js';
-import { evaluateSchedule, runReminderCheck } from './backend/reminder.js';
+import { describeDue, evaluateSchedule, runReminderCheck } from './backend/reminder.js';
 import { getSettings, saveLastReport, setRunStatus } from './backend/store.js';
 
 /**
@@ -32,7 +32,7 @@ export async function scheduled() {
   }
 
   const { message } = await enqueueRun('schedule');
-  console.log(`Плановый прогон (слоты ${schedule.dueTimes.join(', ')}): ${message}`);
+  console.log(`Плановый прогон (${describeDue(schedule.due)}): ${message}`);
 }
 
 /**

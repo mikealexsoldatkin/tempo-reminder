@@ -1,35 +1,20 @@
 import React, { useState } from 'react';
-import {
-  Button,
-  Heading,
-  Inline,
-  Label,
-  LoadingButton,
-  SectionMessage,
-  Stack,
-  Text,
-  Textfield,
-} from '@forge/react';
+import { Heading, Inline, Label, LoadingButton, Stack, Text, Textfield } from '@forge/react';
 import { api } from '../api';
-import { CandidateTable } from './CandidateTable';
+import { CandidateResults } from './CandidateResults';
 import { useCandidateSearch } from './useCandidateSearch';
+import { candidateActions } from './candidateActions';
 
 /**
  * Пакетное добавление по ключу проекта — аналог прежнего getProjectPeople():
  * подтягиваем всех, кого можно назначить на задачи проекта, и добавляем батчем.
  */
-export const AddByProjectSection = ({ trackedIds, onUsersChange }) => {
+export const AddByProjectSection = ({ trackedIds, managerIds, onUsersChange, onManagersChange }) => {
   const [projectKey, setProjectKey] = useState('');
   const search = useCandidateSearch({
     search: (value) => api.searchProjectMembers(value),
-    add: async (users) => {
-      const result = await api.addTrackedUsers(users);
-      onUsersChange(result.users);
-      return result;
-    },
+    actions: candidateActions({ onUsersChange, onManagersChange }),
   });
-
-  const submit = () => search.runSearch(projectKey, { preselectUntracked: true, trackedIds });
 
   return (
     <Stack space="space.150">
@@ -53,45 +38,18 @@ export const AddByProjectSection = ({ trackedIds, onUsersChange }) => {
           appearance="primary"
           isLoading={search.isSearching}
           isDisabled={projectKey.trim().length === 0}
-          onClick={submit}
+          onClick={() => search.runSearch(projectKey, { preselectUntracked: true, trackedIds })}
         >
           Load members
         </LoadingButton>
       </Inline>
 
-      {search.message && (
-        <SectionMessage appearance={search.message.appearance}>
-          <Text>{search.message.text}</Text>
-        </SectionMessage>
-      )}
-
-      {search.candidates && search.candidates.length > 0 && (
-        <Stack space="space.100">
-          <CandidateTable
-            candidates={search.candidates}
-            selected={search.selected}
-            onToggle={search.toggle}
-            trackedIds={trackedIds}
-            showRoles
-          />
-          <Inline space="space.100">
-            <LoadingButton
-              appearance="primary"
-              isLoading={search.isAdding}
-              isDisabled={search.selected.size === 0}
-              onClick={search.addSelected}
-            >
-              Add selected ({search.selected.size})
-            </LoadingButton>
-            <Button appearance="subtle" onClick={() => search.selectAll(trackedIds)}>
-              Select all
-            </Button>
-            <Button appearance="subtle" onClick={search.clearSelection}>
-              Clear selection
-            </Button>
-          </Inline>
-        </Stack>
-      )}
+      <CandidateResults
+        search={search}
+        trackedIds={trackedIds}
+        managerIds={managerIds}
+        showRoles
+      />
     </Stack>
   );
 };

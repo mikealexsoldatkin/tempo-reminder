@@ -15,6 +15,7 @@ import { api } from './api';
 import { AddByNameSection } from './components/AddByNameSection';
 import { AddByProjectSection } from './components/AddByProjectSection';
 import { TrackedUsersTable } from './components/TrackedUsersTable';
+import { ManagersTable } from './components/ManagersTable';
 import { CredentialsTab } from './components/CredentialsTab';
 import { RunTab } from './components/RunTab';
 import { ErrorBoundary } from './components/ErrorBoundary';
@@ -29,10 +30,15 @@ const AdminPage = () => {
 
   const patch = useCallback((changes) => setState((prev) => ({ ...prev, ...changes })), []);
   const onUsersChange = useCallback((trackedUsers) => patch({ trackedUsers }), [patch]);
+  const onManagersChange = useCallback((managers) => patch({ managers }), [patch]);
 
   const trackedIds = useMemo(
     () => new Set((state?.trackedUsers ?? []).map((u) => u.accountId)),
     [state?.trackedUsers]
+  );
+  const managerIds = useMemo(
+    () => new Set((state?.managers ?? []).map((m) => m.accountId)),
+    [state?.managers]
   );
 
   if (loadError) {
@@ -69,9 +75,28 @@ const AdminPage = () => {
         <TabPanel>
           <Box paddingBlockStart="space.200">
             <Stack space="space.400">
-              <AddByNameSection trackedIds={trackedIds} onUsersChange={onUsersChange} />
-              <AddByProjectSection trackedIds={trackedIds} onUsersChange={onUsersChange} />
-              <TrackedUsersTable users={state.trackedUsers} onUsersChange={onUsersChange} />
+              <AddByNameSection
+                trackedIds={trackedIds}
+                managerIds={managerIds}
+                onUsersChange={onUsersChange}
+                onManagersChange={onManagersChange}
+              />
+              <AddByProjectSection
+                trackedIds={trackedIds}
+                managerIds={managerIds}
+                onUsersChange={onUsersChange}
+                onManagersChange={onManagersChange}
+              />
+              <TrackedUsersTable
+                users={state.trackedUsers}
+                managers={state.managers}
+                onUsersChange={onUsersChange}
+              />
+              <ManagersTable
+                managers={state.managers}
+                onManagersChange={onManagersChange}
+                onUsersChange={onUsersChange}
+              />
             </Stack>
           </Box>
         </TabPanel>
