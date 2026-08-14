@@ -17,6 +17,27 @@ import {
 import { api } from '../api';
 
 /**
+ * DynamicTable не отдаёт содержимое ячейки на обычный рендер: если content —
+ * элемент функционального компонента, таблица вызывает его прямо в своём рендере
+ * (`content.type(content.props)`). Хуки такого компонента попадают в список хуков
+ * самой таблицы, и их число начинает зависеть от числа строк — после добавления
+ * или удаления пользователя React падает с «Rendered more/fewer hooks than
+ * expected» (ошибки #310 и #300).
+ *
+ * Обёртка без собственных хуков — это то, что таблица вызовет вместо InlineEdit
+ * (у него четыре useState). Сам InlineEdit остаётся элементом в возвращённом
+ * дереве, монтируется обычным путём и держит своё состояние у себя.
+ */
+const EmailCell = ({ email, onConfirm }) => (
+  <InlineEdit
+    defaultValue={email ?? ''}
+    editView={(fieldProps) => <Textfield {...fieldProps} placeholder="name@company.com" />}
+    readView={() => <Text>{email ?? '— set an email'}</Text>}
+    onConfirm={onConfirm}
+  />
+);
+
+/**
  * Текущий список отслеживаемых пользователей: удаление (по одному и батчем)
  * и ручная правка email — он нужен для поиска человека в Slack, а Jira
  * отдаёт его только если профиль не скрыт настройками приватности.
@@ -72,12 +93,8 @@ export const TrackedUsersTable = ({ users, onUsersChange }) => {
       {
         key: 'email',
         content: (
-          <InlineEdit
-            defaultValue={user.email ?? ''}
-            editView={(fieldProps) => <Textfield {...fieldProps} placeholder="name@company.com" />}
-            // Тип элемента не зависит от данных: иначе строка перерисовывается
-            // с другой структурой, когда у пользователя появляется email.
-            readView={() => <Text>{user.email ?? '— set an email'}</Text>}
+          <EmailCell
+            email={user.email}
             onConfirm={(value) => mutate(() => api.setTrackedUserEmail(user.accountId, value))}
           />
         ),
@@ -110,8 +127,6 @@ export const TrackedUsersTable = ({ users, onUsersChange }) => {
     <Stack space="space.150">
       <Heading as="h3" size="medium">Tracked users ({users.length})</Heading>
 
-      {/* Два независимых блока, а не тернар: при удалении последнего пользователя
-          на одной позиции не подменяется тип элемента. */}
       {users.length === 0 && (
         <SectionMessage appearance="warning">
           <Text>

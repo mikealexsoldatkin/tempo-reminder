@@ -5,8 +5,6 @@ import { Box, Checkbox, DynamicTable, Inline, Lozenge, Text } from '@forge/react
  * Таблица результатов поиска с чекбоксами — общая для поиска по имени и по проекту.
  */
 export const CandidateTable = ({ candidates, selected, onToggle, trackedIds, showRoles = false }) => {
-  // showRoles приходит пропом и постоянен для секции. Вычислять его из данных нельзя:
-  // набор колонок DynamicTable менялся бы между рендерами, а это ломает таблицу.
   const head = {
     cells: [
       { key: 'select', content: '', width: 5 },
@@ -34,8 +32,6 @@ export const CandidateTable = ({ candidates, selected, onToggle, trackedIds, sho
           ),
         },
         { key: 'name', content: <Text>{candidate.displayName}</Text> },
-        // Тип элемента в ячейке не должен зависеть от данных — иначе при смене
-        // isTracked/email таблица перерисовывается с другой структурой и падает.
         { key: 'email', content: <Text>{candidate.email ?? '— no email'}</Text> },
         ...(showRoles
           ? [{ key: 'roles', content: <Text>{candidate.roles?.join(', ') || '—'}</Text> }]
