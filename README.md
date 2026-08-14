@@ -43,7 +43,7 @@ Jira → **Настройки** → **Приложения** → **Tempo Reminde
 ### 2. Вкладка «Tokens and settings»
 - **Tempo API token** и **Slack bot token** — password-поля. Значения кладутся в секретное хранилище
   Forge (`kvs.setSecret`) и наружу **никогда не возвращаются**: UI видит только «set / not set»,
-  последние 4 символа и дату обновления.
+  последние 4 символа и дату обновления. Где их взять — в разделе [«Где взять токены»](#где-взять-токены).
 - **Test connection** — дёргает Tempo и Slack `auth.test` текущими токенами.
 - Параметры: глубина окна в рабочих днях, пропуск выходных, «не повторять за день», шаблон
   сообщения с плейсхолдерами `{name}`, `{from}`, `{to}`, `{days}`.
@@ -66,15 +66,72 @@ Jira → **Настройки** → **Приложения** → **Tempo Reminde
    npm install -g @forge/cli
    forge login          # email + Atlassian API token
    ```
-2. **Tempo API token**: Tempo → Settings → API integration → New token (нужно чтение worklog'ов).
-3. **Slack App (Bot token)** со scope'ами: `users:read`, `users:read.email`, `chat:write`, `im:write`.
-   Установить в workspace, скопировать `xoxb-...`.
+2. **Tempo API token** и **Slack bot token** — см. раздел [«Где взять токены»](#где-взять-токены)
+   ниже. Оба вводятся только на странице настроек, через CLI их задать нельзя.
+
+---
+
+## Где взять токены
+
+Оба токена вводятся на вкладке **«Tokens and settings»** страницы настроек приложения и попадают
+в секретное хранилище Forge (`kvs.setSecret`). Обратно в UI они не отдаются: видно только
+«set / not set», последние 4 символа и дату обновления. После сохранения обоих нажмите
+**Test connection** — приложение дёрнет Tempo и Slack `auth.test` текущими значениями.
+
+### Tempo API token
+
+1. В Jira откройте **Apps → Tempo**, затем в левом меню Tempo — **Settings** (шестерёнка внизу).
+2. Раздел **API integration** → кнопка **New Token**.
+3. Заполните:
+   - **Name** — понятное имя, например `Tempo Reminder (Forge)`;
+   - **Expiration** — срок жизни токена (после истечения прогон начнёт падать с ошибкой
+     `Couldn't fetch worklogs from Tempo`, токен придётся выпустить заново);
+   - **Scope / доступ** — достаточно **чтения worklog'ов** (`View worklogs` / read-only).
+     Права на запись приложению не нужны.
+4. Нажмите **Create** и **сразу скопируйте значение** — Tempo показывает токен один раз.
+5. Вставьте его в поле **Tempo API token** и нажмите **Save**.
+
+> Токен работает от имени того, кто его создал: этот человек должен видеть worklog'и **всех**
+> отслеживаемых сотрудников (обычно это Tempo-администратор). Иначе часть людей окажется
+> «не отчитавшимися» просто потому, что их записи не видны токену. По той же причине токен,
+> выпущенный увольняющимся сотрудником, лучше перевыпустить заранее.
+
+### Slack bot token
+
+В качестве Slack-бота используется уже созданное приложение **«Tempo Reminder»** в workspace
+`americor.slack.com` — новое создавать не нужно (но если сильно хочется, или потеряется доступ, то можно):
+
+**<https://americor.slack.com/marketplace/A0BL9AG1SHZ-tempo-reminder?settings=1>**
+
+1. Откройте ссылку выше — это страница приложения в workspace (настройки, доступ, кто установил).
+   Нужны права администратора workspace либо роль collaborator у приложения.
+2. Сам токен лежит в консоли разработчика: **<https://api.slack.com/apps>** → приложение
+   **Tempo Reminder** → **OAuth & Permissions** → **Bot User OAuth Token** вида `xoxb-…`.
+3. Проверьте, что в **Scopes → Bot Token Scopes** есть все четыре:
+
+   | Scope | Зачем |
+   | --- | --- |
+   | `users:read` | базовый доступ к справочнику пользователей |
+   | `users:read.email` | поиск сотрудника по email (`users.lookupByEmail`) |
+   | `chat:write` | отправка сообщения |
+   | `im:write` | открытие личного канала с сотрудником |
+
+   Если какого-то scope не хватает — добавьте и переустановите приложение в workspace
+   (**Install App → Reinstall to Workspace**); после переустановки **значение `xoxb-…` меняется**,
+   и его нужно обновить в настройках приложения.
+4. Вставьте токен в поле **Slack bot token (xoxb-…)** и нажмите **Save**.
+
+> Бот пишет только в личку (DM), приглашать его в каналы не нужно. Чтобы найти человека в Slack,
+> приложению нужен его **email** — тот же адрес, что в Jira. Если адреса нет, в таблице
+> отслеживаемых будет «set an email»: впишите его вручную, иначе сотрудник получит статус
+> `no email` и сообщение ему не уйдёт.
+
+---
 
 ## Установка и деплой
 
 ```bash
 npm install
-forge register    # только если app.id ещё не ваш
 forge deploy
 forge install     # выбрать Jira и указать сайт
 ```
@@ -84,21 +141,6 @@ forge install     # выбрать Jira и указать сайт
 и до апгрейда приложение работает со старым набором scope'ов.
 
 Токены и список пользователей **не задаются через CLI** — только на странице настроек после установки.
-
-### Миграция со старой версии
-
-Прежние env-переменные больше не читаются, их можно удалить:
-
-```bash
-forge variables unset TEMPO_TOKEN
-forge variables unset SLACK_BOT_TOKEN
-forge variables unset PROJECT_KEY
-```
-
-`PROJECT_KEY` заменён вкладкой «Users»: тот же список подтягивается кнопкой
-«Load members» по ключу проекта, но дальше хранится явно и правится руками.
-
----
 
 ## Как проверить
 
@@ -150,4 +192,7 @@ forge variables unset PROJECT_KEY
 - [Key-value store — Forge](https://developer.atlassian.com/platform/forge/runtime-reference/key-value-store/)
 - [Runtime egress permissions — Forge](https://developer.atlassian.com/platform/forge/runtime-egress-permissions/)
 - [Worklog REST APIs for Jira Cloud — Tempo](https://help.tempo.io/cloudmigration/latest/worklog-rest-apis-for-jira-cloud)
+- [API integration (создание токена) — Tempo](https://help.tempo.io/cloud/latest/api-integration)
 - [Slack users.lookupByEmail](https://docs.slack.dev/reference/methods/users.lookupByEmail/)
+- [Slack: installing apps and bot tokens](https://docs.slack.dev/authentication/installing-with-oauth/)
+- [Приложение «Tempo Reminder» в workspace americor](https://americor.slack.com/marketplace/A0BL9AG1SHZ-tempo-reminder?settings=1)

@@ -41,6 +41,11 @@ export const DEFAULT_SETTINGS = {
   // построчно.
   managerMessageTemplate:
     ':bar_chart: Hi {name}! {count} of the people you manage have no time entries in Tempo for the last {days} working days ({from} — {to}):\n{list}',
+  // Уходит менеджеру, у которого отчитались все: рассылка идёт по всему списку
+  // менеджеров, и молчание в этом случае неотличимо от сломавшегося приложения.
+  // Плейсхолдеры: {from}, {to}, {days}, {name} и {count} — размер команды.
+  managerAllClearTemplate:
+    ':white_check_mark: Hi {name}! Everyone you manage has logged their time in Tempo for the last {days} working days ({from} — {to}). Nothing to chase 🎉',
 };
 
 /* ---------------------------- настройки ---------------------------- */
@@ -91,6 +96,9 @@ function normalizeSettings(settings) {
     messageTemplate: String(settings.messageTemplate || DEFAULT_SETTINGS.messageTemplate).slice(0, 1000),
     managerMessageTemplate: String(
       settings.managerMessageTemplate || DEFAULT_SETTINGS.managerMessageTemplate
+    ).slice(0, 1000),
+    managerAllClearTemplate: String(
+      settings.managerAllClearTemplate || DEFAULT_SETTINGS.managerAllClearTemplate
     ).slice(0, 1000),
   };
 }
@@ -360,7 +368,7 @@ const ROW_PRIORITY = {
   reminded: 2,
   notified: 2,
   logged: 3,
-  'nothing-to-report': 3,
+  'all-clear': 3,
 };
 
 function trimRows(rows, limit) {

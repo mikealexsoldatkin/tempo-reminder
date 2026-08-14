@@ -22,8 +22,10 @@ import {
   nextRunTime,
 } from './schedule.js';
 import {
+  countManagedPeople,
   countWithoutManager,
   groupByManager,
+  renderManagerAllClearMessage,
   renderManagerMessage,
   renderUserMessage,
 } from './notifications.js';
@@ -32,7 +34,7 @@ export const OUTCOME = {
   reminded: 'reminded',
   logged: 'logged',
   notified: 'notified',
-  nothingToReport: 'nothing-to-report',
+  allClear: 'all-clear',
   noEmail: 'no-email',
   noSlack: 'no-slack',
   error: 'error',
@@ -131,7 +133,7 @@ export async function runReminderCheck({ trigger, requestedBy = null, now = new 
     ? await remindUsers({ users, authorsWithWorklogs, window, settings, slackBotToken })
     : [];
   const managerRows = targets.managers
-    ? await notifyManagers({ unreported, window, settings, slackBotToken })
+    ? await notifyManagers({ users, unreported, window, settings, slackBotToken })
     : [];
 
   const totals = countUserOutcomes(rows);
@@ -140,7 +142,7 @@ export async function runReminderCheck({ trigger, requestedBy = null, now = new 
   const managerTotals = countManagerOutcomes(managerRows, targets.managers ? unreported : []);
   console.log(
     `Готово. Напоминаний: ${totals.reminded}, дайджестов: ${managerTotals.notified}, ` +
-      `ошибок: ${totals.failed + managerTotals.failed}`
+      `«всё в порядке»: ${managerTotals.allClear}, ошибок: ${totals.failed + managerTotals.failed}`
   );
 
   return finish({
@@ -184,43 +186,62 @@ async function remindUsers({ users, authorsWithWorklogs, window, settings, slack
 }
 
 /**
- * Дайджесты менеджерам: одно сообщение со списком тех подчинённых, кто не отчитался.
- * Менеджеры, у которых отчитались все, получают строку в отчёте, но не сообщение.
+ * Сообщения менеджерам: одно каждому из списка. Тем, у кого кто-то не отчитался,
+ * уходит дайджест со списком таких подчинённых; остальным — отдельный текст о том,
+ * что отчитались все. Молчание в этом случае неотличимо от сломавшейся рассылки,
+ * поэтому пишем всем.
  */
-async function notifyManagers({ unreported, window, settings, slackBotToken }) {
+async function notifyManagers({ users, unreported, window, settings, slackBotToken }) {
   const managers = await getManagers();
   if (managers.length === 0) return [];
 
   const withPeople = new Map(
     groupByManager(unreported, managers).map(({ manager, people }) => [manager.accountId, people])
   );
+  const managedCounts = countManagedPeople(users);
   const rows = [];
   const slackIdsToCache = {};
 
   for (const manager of managers) {
     const people = withPeople.get(manager.accountId) ?? [];
-    if (people.length === 0) {
-      rows.push(managerRow(manager, 0, OUTCOME.nothingToReport, 'Everyone they manage has logged time'));
-      continue;
-    }
+    const isAllClear = people.length === 0;
+    const managedCount = managedCounts.get(manager.accountId) ?? 0;
 
-    const text = renderManagerMessage(settings.managerMessageTemplate, {
-      manager,
-      people,
-      window,
-      lookbackWorkingDays: settings.lookbackWorkingDays,
-    });
+    const text = isAllClear
+      ? renderManagerAllClearMessage(settings.managerAllClearTemplate, {
+          manager,
+          managedCount,
+          window,
+          lookbackWorkingDays: settings.lookbackWorkingDays,
+        })
+      : renderManagerMessage(settings.managerMessageTemplate, {
+          manager,
+          people,
+          window,
+          lookbackWorkingDays: settings.lookbackWorkingDays,
+        });
+
     const sent = await dm(manager, text, slackBotToken, slackIdsToCache);
-    const detail =
-      sent.outcome === OUTCOME.reminded
-        ? `Digest sent: ${people.map((p) => p.displayName).join(', ')}`
-        : sent.detail;
-    const outcome = sent.outcome === OUTCOME.reminded ? OUTCOME.notified : sent.outcome;
+    const delivered = sent.outcome === OUTCOME.reminded;
+    const outcome = delivered ? (isAllClear ? OUTCOME.allClear : OUTCOME.notified) : sent.outcome;
+    const detail = delivered ? describeSent(people, managedCount) : sent.detail;
     rows.push(managerRow(manager, people.length, outcome, detail));
   }
 
   await cacheManagerSlackUserIds(slackIdsToCache);
   return rows;
+}
+
+/**
+ * Что именно ушло менеджеру — строкой для отчёта. Менеджер без единого закреплённого
+ * сотрудника тоже получает «всё в порядке», и это стоит отметить: скорее всего его
+ * просто забыли проставить кому-то в колонке Managers.
+ */
+function describeSent(people, managedCount) {
+  if (people.length > 0) return `Digest sent: ${people.map((p) => p.displayName).join(', ')}`;
+  return managedCount > 0
+    ? `All clear message sent: all ${managedCount} of their people have logged time`
+    : 'All clear message sent, but nobody is assigned to this manager';
 }
 
 /**
@@ -372,7 +393,7 @@ function countManagerOutcomes(rows, unreported) {
   const totals = {
     managers: rows.length,
     notified: 0,
-    nothingToReport: 0,
+    allClear: 0,
     failed: 0,
     skipped: 0,
     // Не отчитавшиеся, которым не назначен ни один менеджер: о них не узнает никто,
@@ -381,7 +402,7 @@ function countManagerOutcomes(rows, unreported) {
   };
   for (const { outcome } of rows) {
     if (outcome === OUTCOME.notified) totals.notified++;
-    else if (outcome === OUTCOME.nothingToReport) totals.nothingToReport++;
+    else if (outcome === OUTCOME.allClear) totals.allClear++;
     else if (outcome === OUTCOME.error) totals.failed++;
     else totals.skipped++;
   }
@@ -391,7 +412,11 @@ function countManagerOutcomes(rows, unreported) {
 function summarize(targets, totals, managerTotals, unreportedCount) {
   const parts = [`${unreportedCount} of the tracked people have no entries`];
   if (targets.users) parts.push(`reminders sent: ${totals.reminded}`);
-  if (targets.managers) parts.push(`manager digests sent: ${managerTotals.notified}`);
+  if (targets.managers) {
+    parts.push(
+      `manager digests sent: ${managerTotals.notified}, all-clear notes: ${managerTotals.allClear}`
+    );
+  }
   if (!targets.users && !targets.managers) parts.push('nothing was sent');
   return parts.join(', ');
 }
@@ -401,7 +426,7 @@ async function finish(report, schedule = null) {
     rows: [],
     totals: { tracked: 0, logged: 0, reminded: 0, skipped: 0, failed: 0 },
     managerRows: [],
-    managerTotals: { managers: 0, notified: 0, nothingToReport: 0, failed: 0, skipped: 0, withoutManager: 0 },
+    managerTotals: { managers: 0, notified: 0, allClear: 0, failed: 0, skipped: 0, withoutManager: 0 },
     window: null,
     ...report,
     finishedAt: new Date().toISOString(),

@@ -24,7 +24,7 @@ const OUTCOME_VIEW = {
   reminded: { appearance: 'inprogress', label: 'reminder sent' },
   logged: { appearance: 'success', label: 'time logged' },
   notified: { appearance: 'inprogress', label: 'digest sent' },
-  'nothing-to-report': { appearance: 'success', label: 'nothing to report' },
+  'all-clear': { appearance: 'success', label: 'all clear sent' },
   'no-email': { appearance: 'removed', label: 'no email' },
   'no-slack': { appearance: 'removed', label: 'not in Slack' },
   error: { appearance: 'removed', label: 'error' },
@@ -145,8 +145,9 @@ export const RunTab = ({ runStatus, lastReport, trackedCount, credentials, onRun
             <ModalBody>
               <Text>
                 Real Slack messages will be sent to every tracked user (currently {trackedCount})
-                who has no Tempo entries within the check window, and their managers will get the
-                digest. A manual run ignores both schedules and sends everything.
+                who has no Tempo entries within the check window, and to every manager on the list —
+                either a digest, or the “everyone has logged time” note. A manual run ignores both
+                schedules and sends everything.
               </Text>
             </ModalBody>
             <ModalFooter>
@@ -260,8 +261,8 @@ const ManagerDigests = ({ report }) => {
     <Stack space="space.100">
       <Heading as="h4" size="small">Manager digests</Heading>
       <Text>
-        Managers: {totals.managers}, digests sent: {totals.notified}, nothing to report:{' '}
-        {totals.nothingToReport}, errors: {totals.failed}
+        Managers: {totals.managers}, digests sent: {totals.notified}, all-clear notes sent:{' '}
+        {totals.allClear ?? 0}, errors: {totals.failed}
       </Text>
       {totals.withoutManager > 0 && (
         <SectionMessage appearance="warning">

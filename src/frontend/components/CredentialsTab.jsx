@@ -13,8 +13,15 @@ import {
   Text,
   TextArea,
   Textfield,
+  xcss,
 } from '@forge/react';
 import { api } from '../api';
+
+// TextArea тянется на всю ширину родителя и своей ширины не имеет, поэтому размер
+// трём шаблонам задаёт обёртка, а не сами поля. width: '100%' + flexGrow внутри Inline
+// означает «занять всё, что есть»: колонки равномерно ужимаются от полной ширины
+// страницы и остаются одинаковыми, каких бы размеров ни было окно.
+const templateFieldStyles = xcss({ width: '100%', flexGrow: 1 });
 
 const CREDENTIALS = [
   {
@@ -220,7 +227,9 @@ export const CredentialsTab = ({
               placeholder="17:00"
               onChange={(e) => setForm((prev) => ({ ...prev, managerRunTimes: e.target.value }))}
             />
-            <HelperMessage>Digests to managers. Independent of the schedule on the left.</HelperMessage>
+            <HelperMessage>
+              Digests and all-clear notes to managers. Independent of the schedule on the left.
+            </HelperMessage>
           </Stack>
         </Inline>
         <HelperMessage>
@@ -250,34 +259,55 @@ export const CredentialsTab = ({
           onChange={(e) => setForm((prev) => ({ ...prev, skipWeekends: e.target.checked }))}
         />
 
-        <Inline space="space.200" alignBlock="start">
-          <Stack space="space.050">
-            <Label labelFor="template">Reminder text</Label>
-            <TextArea
-              id="template"
-              value={form.messageTemplate}
-              onChange={(e) => setForm((prev) => ({ ...prev, messageTemplate: e.target.value }))}
-            />
-            <HelperMessage>
-              Sent to the person who didn’t log time. Placeholders: {'{name}'}, {'{from}'},{' '}
-              {'{to}'}, {'{days}'}.
-            </HelperMessage>
-          </Stack>
-          <Stack space="space.050">
-            <Label labelFor="manager-template">Manager reminder text</Label>
-            <TextArea
-              id="manager-template"
-              value={form.managerMessageTemplate}
-              onChange={(e) =>
-                setForm((prev) => ({ ...prev, managerMessageTemplate: e.target.value }))
-              }
-            />
-            <HelperMessage>
-              Sent to each manager. The same placeholders plus {'{count}'} — how many of their
-              people didn’t log time — and {'{list}'} — their names, one per line. {'{name}'} is the
-              manager’s own name.
-            </HelperMessage>
-          </Stack>
+        <Inline space="space.200" alignBlock="start" grow="fill">
+          <Box xcss={templateFieldStyles}>
+            <Stack space="space.050">
+              <Label labelFor="template">Reminder text</Label>
+              <TextArea
+                id="template"
+                value={form.messageTemplate}
+                onChange={(e) => setForm((prev) => ({ ...prev, messageTemplate: e.target.value }))}
+              />
+              <HelperMessage>
+                Sent to the person who didn’t log time. Placeholders: {'{name}'}, {'{from}'},{' '}
+                {'{to}'}, {'{days}'}.
+              </HelperMessage>
+            </Stack>
+          </Box>
+          <Box xcss={templateFieldStyles}>
+            <Stack space="space.050">
+              <Label labelFor="manager-template">Manager reminder text</Label>
+              <TextArea
+                id="manager-template"
+                value={form.managerMessageTemplate}
+                onChange={(e) =>
+                  setForm((prev) => ({ ...prev, managerMessageTemplate: e.target.value }))
+                }
+              />
+              <HelperMessage>
+                Sent to a manager who has someone to chase. The same placeholders plus {'{count}'} —
+                how many of their people didn’t log time — and {'{list}'} — their names, one per
+                line. {'{name}'} is the manager’s own name.
+              </HelperMessage>
+            </Stack>
+          </Box>
+          <Box xcss={templateFieldStyles}>
+            <Stack space="space.050">
+              <Label labelFor="manager-all-clear-template">Manager all-clear text</Label>
+              <TextArea
+                id="manager-all-clear-template"
+                value={form.managerAllClearTemplate}
+                onChange={(e) =>
+                  setForm((prev) => ({ ...prev, managerAllClearTemplate: e.target.value }))
+                }
+              />
+              <HelperMessage>
+                Sent to a manager whose people have all logged their time — every manager on the
+                list gets a message, so silence never means a broken run. Placeholders: {'{name}'},{' '}
+                {'{from}'}, {'{to}'}, {'{days}'} and {'{count}'} — how many people they manage.
+              </HelperMessage>
+            </Stack>
+          </Box>
         </Inline>
 
         <Inline space="space.100">

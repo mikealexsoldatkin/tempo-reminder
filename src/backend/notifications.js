@@ -37,6 +37,23 @@ export function countWithoutManager(unreportedUsers) {
   return unreportedUsers.filter((user) => (user.managerIds ?? []).length === 0).length;
 }
 
+/**
+ * Размер команды каждого менеджера — по всем отслеживаемым, а не только по
+ * должникам: в сообщении «все отчитались» счётчик означает именно команду.
+ *
+ * @param {Array} users все отслеживаемые пользователи
+ * @returns {Map<string, number>} accountId менеджера → сколько за ним закреплено
+ */
+export function countManagedPeople(users) {
+  const counts = new Map();
+  for (const user of users) {
+    for (const managerId of user.managerIds ?? []) {
+      counts.set(managerId, (counts.get(managerId) ?? 0) + 1);
+    }
+  }
+  return counts;
+}
+
 export function renderUserMessage(template, { user, window, lookbackWorkingDays }) {
   return fillPlaceholders(template, {
     name: firstName(user.displayName),
@@ -54,6 +71,24 @@ export function renderManagerMessage(template, { manager, people, window, lookba
     days: String(lookbackWorkingDays),
     count: String(people.length),
     list: people.map((person) => `• ${person.displayName}`).join('\n'),
+  });
+}
+
+/**
+ * Сообщение менеджеру, у которого отчитались все. Списка должников тут нет,
+ * поэтому {list} не подставляется и остаётся в тексте как есть — так виднее,
+ * что плейсхолдер выбран не из того шаблона.
+ */
+export function renderManagerAllClearMessage(
+  template,
+  { manager, managedCount, window, lookbackWorkingDays }
+) {
+  return fillPlaceholders(template, {
+    name: firstName(manager.displayName),
+    from: window.from,
+    to: window.to,
+    days: String(lookbackWorkingDays),
+    count: String(managedCount),
   });
 }
 

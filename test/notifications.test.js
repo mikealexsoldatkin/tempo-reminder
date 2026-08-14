@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  countManagedPeople,
   countWithoutManager,
   groupByManager,
+  renderManagerAllClearMessage,
   renderManagerMessage,
   renderUserMessage,
 } from '../src/backend/notifications.js';
@@ -45,6 +47,13 @@ test('пустой список менеджеров не ломает груп�
   assert.deepEqual(groupByManager([anna, boris], []), []);
 });
 
+test('размер команды считается по всем отслеживаемым, а не по должникам', () => {
+  const counts = countManagedPeople([anna, boris, clara]);
+  assert.equal(counts.get('m1'), 2);
+  assert.equal(counts.get('m2'), 1);
+  assert.equal(counts.get('m3'), undefined);
+});
+
 /* -------------------------------- шаблоны -------------------------------- */
 
 test('в напоминании сотруднику подставляются имя и окно', () => {
@@ -67,6 +76,26 @@ test('в дайджесте менеджеру подставляются его
     text,
     'Maria: 2 people\n• Anna Ivanova\n• Boris Petrov\nwindow 2026-08-12—2026-08-14'
   );
+});
+
+test('в сообщении «все отчитались» счётчик — это размер команды', () => {
+  const text = renderManagerAllClearMessage('{name}: all {count} logged time, {from}—{to}', {
+    manager: managers[0],
+    managedCount: 4,
+    window,
+    lookbackWorkingDays: 2,
+  });
+  assert.equal(text, 'Maria: all 4 logged time, 2026-08-12—2026-08-14');
+});
+
+test('{list} в сообщении «все отчитались» остаётся как есть — списка должников нет', () => {
+  const text = renderManagerAllClearMessage('{name}: {list}', {
+    manager: managers[0],
+    managedCount: 0,
+    window,
+    lookbackWorkingDays: 2,
+  });
+  assert.equal(text, 'Maria: {list}');
 });
 
 test('плейсхолдер, пришедший из данных, повторно не подставляется', () => {
