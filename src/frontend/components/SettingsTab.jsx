@@ -31,6 +31,12 @@ const templateFieldStyles = xcss({ width: '100%', flexGrow: 1 });
 // Нижнюю границу держит minWidth: он в белый список входит.
 const fieldColumnStyles = xcss({ width: '100%', flexGrow: 1, minWidth: '160px' });
 
+// Вдвое выше стандартных двух строк TextArea: шаблоны многострочные, и в узкой
+// колонке двух строк не хватало, чтобы увидеть текст целиком, не прокручивая его
+// внутри поля. Это именно минимум — resize у TextArea по умолчанию 'smart', так
+// что под длинный шаблон поле дорастает само (до maxHeight в 50vh).
+const TEMPLATE_ROWS = 4;
+
 /**
  * Задержка не может съесть всё окно — иначе спрашивать было бы не о чем. Бэкенд
  * прижимает значение сам, здесь то же правило нужно лишь стрелкам в поле.
@@ -267,6 +273,7 @@ export const SettingsTab = ({ settings, schedule, onSettingsChange }) => {
             <Label labelFor="template">Reminder text</Label>
             <TextArea
               id="template"
+              minimumRows={TEMPLATE_ROWS}
               value={form.messageTemplate}
               onChange={edit('messageTemplate')}
               onBlur={() => commit('messageTemplate')}
@@ -283,6 +290,7 @@ export const SettingsTab = ({ settings, schedule, onSettingsChange }) => {
             <Label labelFor="manager-template">Manager reminder text</Label>
             <TextArea
               id="manager-template"
+              minimumRows={TEMPLATE_ROWS}
               value={form.managerMessageTemplate}
               onChange={edit('managerMessageTemplate')}
               onBlur={() => commit('managerMessageTemplate')}
@@ -300,6 +308,7 @@ export const SettingsTab = ({ settings, schedule, onSettingsChange }) => {
             <Label labelFor="detailed-template">Detailed report text</Label>
             <TextArea
               id="detailed-template"
+              minimumRows={TEMPLATE_ROWS}
               value={form.detailedReportTemplate}
               onChange={edit('detailedReportTemplate')}
               onBlur={() => commit('detailedReportTemplate')}
@@ -318,6 +327,7 @@ export const SettingsTab = ({ settings, schedule, onSettingsChange }) => {
             <Label labelFor="manager-all-clear-template">Manager all-clear text</Label>
             <TextArea
               id="manager-all-clear-template"
+              minimumRows={TEMPLATE_ROWS}
               value={form.managerAllClearTemplate}
               onChange={edit('managerAllClearTemplate')}
               onBlur={() => commit('managerAllClearTemplate')}
