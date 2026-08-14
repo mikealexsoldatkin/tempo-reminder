@@ -67,7 +67,7 @@ const EMPTY_FORM = {
   offsetDays: '0',
 };
 
-export const HolidaysTab = ({ holidays, skipHolidays, onHolidaysChange }) => {
+export const HolidaysTab = ({ holidays, settings, onHolidaysChange, onSettingsChange }) => {
   const [form, setForm] = useState(EMPTY_FORM);
   const [isBusy, setIsBusy] = useState(false);
   const [selected, setSelected] = useState(new Set());
@@ -99,6 +99,23 @@ export const HolidaysTab = ({ holidays, skipHolidays, onHolidaysChange }) => {
     } catch (e) {
       setMessage({ appearance: 'error', text: e.message });
       return false;
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  /**
+   * Галочки сохраняются сразу, без отдельной кнопки: остальное на этой вкладке
+   * тоже применяется по клику, а держать здесь вторую форму с «Save» — лишний шаг.
+   */
+  const toggleSetting = async (patch) => {
+    setIsBusy(true);
+    setMessage(null);
+    try {
+      const result = await api.saveSettings(patch);
+      onSettingsChange(result.settings);
+    } catch (e) {
+      setMessage({ appearance: 'error', text: e.message });
     } finally {
       setIsBusy(false);
     }
@@ -173,6 +190,26 @@ export const HolidaysTab = ({ holidays, skipHolidays, onHolidaysChange }) => {
 
   return (
     <Stack space="space.300">
+      <Stack space="space.100">
+        <Heading as="h3" size="medium">Non-working days</Heading>
+        <Checkbox
+          isChecked={settings.skipWeekends}
+          isDisabled={isBusy}
+          label="Don’t run the scheduled check on weekends"
+          onChange={(e) => toggleSetting({ skipWeekends: e.target.checked })}
+        />
+        <Checkbox
+          isChecked={settings.skipHolidays}
+          isDisabled={isBusy}
+          label="Take the holiday calendar into account"
+          onChange={(e) => toggleSetting({ skipHolidays: e.target.checked })}
+        />
+        <HelperMessage>
+          Both switches are saved right away. With the calendar off the list below changes nothing —
+          holidays are then treated as ordinary working days.
+        </HelperMessage>
+      </Stack>
+
       <Stack space="space.150">
         <Heading as="h3" size="medium">Holiday calendar ({holidays.length})</Heading>
         <Text>
@@ -180,15 +217,6 @@ export const HolidaysTab = ({ holidays, skipHolidays, onHolidaysChange }) => {
           skipped on it. Holidays are stored as rules, so “last Monday of May” stays correct next
           year too.
         </Text>
-
-        {!skipHolidays && (
-          <SectionMessage appearance="warning">
-            <Text>
-              “Take the holiday calendar into account” is off on the “Check parameters” tab, so
-              this list changes nothing right now — holidays are treated as ordinary working days.
-            </Text>
-          </SectionMessage>
-        )}
 
         {holidays.length === 0 && (
           <SectionMessage appearance="warning">

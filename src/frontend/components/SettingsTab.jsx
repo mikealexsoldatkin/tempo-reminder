@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import {
   Box,
-  Checkbox,
   Heading,
   HelperMessage,
   Inline,
@@ -21,6 +20,15 @@ import { api } from '../api';
 // означает «занять всё, что есть»: колонки равномерно ужимаются от полной ширины
 // страницы и остаются одинаковыми, каких бы размеров ни было окно.
 const templateFieldStyles = xcss({ width: '100%', flexGrow: 1 });
+
+// Все четыре поля над шаблонами — одной ширины: они стоят в два ряда по два, и
+// при разной ширине колонки второго ряда не совпадали бы с первым.
+const FIELD_WIDTH = 240;
+
+// Ширину колонки задаёт не поле, а самый широкий её элемент — подсказка под ним.
+// Без явного ограничения длинный HelperMessage растягивает колонку, и соседнее
+// поле уезжает вправо: у двух рядов получаются разные на вид интервалы.
+const fieldColumnStyles = xcss({ width: `${FIELD_WIDTH}px` });
 
 /**
  * Задержка не может съесть всё окно — иначе спрашивать было бы не о чем. Бэкенд
@@ -57,7 +65,18 @@ export const SettingsTab = ({ settings, schedule, onSettingsChange }) => {
     setIsSaving(true);
     setMessage(null);
     try {
-      const result = await api.saveSettings(form);
+      // Отправляем только свои поля, а не всю форму: пропуск выходных и праздников
+      // живёт на вкладке Holidays и сохраняется там сразу. Уехавшее вместе с формой
+      // устаревшее значение затёрло бы только что переключённую галочку.
+      const result = await api.saveSettings({
+        lookbackWorkingDays: form.lookbackWorkingDays,
+        acceptableDelayDays: form.acceptableDelayDays,
+        runTimes: form.runTimes,
+        managerRunTimes: form.managerRunTimes,
+        messageTemplate: form.messageTemplate,
+        managerMessageTemplate: form.managerMessageTemplate,
+        managerAllClearTemplate: form.managerAllClearTemplate,
+      });
       setForm(toForm(result.settings));
       setScheduleInfo(result.schedule ?? null);
       onSettingsChange(result.settings);
@@ -74,37 +93,41 @@ export const SettingsTab = ({ settings, schedule, onSettingsChange }) => {
       <Heading as="h3" size="medium">Check parameters</Heading>
 
       <Inline space="space.200" alignBlock="start">
-        <Stack space="space.050">
-          <Label labelFor="lookback">Working days to check</Label>
-          <Textfield
-            id="lookback"
-            type="number"
-            width={120}
-            min={1}
-            max={30}
-            value={String(form.lookbackWorkingDays)}
-            onChange={(e) => setForm((prev) => ({ ...prev, lookbackWorkingDays: e.target.value }))}
-          />
-          <HelperMessage>
-            The whole window: the last N working days, including today. Weekends are skipped.
-          </HelperMessage>
-        </Stack>
-        <Stack space="space.050">
-          <Label labelFor="acceptable-delay">Acceptable days of delay</Label>
-          <Textfield
-            id="acceptable-delay"
-            type="number"
-            width={120}
-            min={0}
-            max={maxDelayFor(form.lookbackWorkingDays)}
-            value={String(form.acceptableDelayDays)}
-            onChange={(e) => setForm((prev) => ({ ...prev, acceptableDelayDays: e.target.value }))}
-          />
-          <HelperMessage>
-            How many of the most recent working days are excused — time for them may still be
-            missing. 0 means today’s time is already expected.
-          </HelperMessage>
-        </Stack>
+        <Box xcss={fieldColumnStyles}>
+          <Stack space="space.050">
+            <Label labelFor="lookback">Working days to check</Label>
+            <Textfield
+              id="lookback"
+              type="number"
+              width={FIELD_WIDTH}
+              min={1}
+              max={30}
+              value={String(form.lookbackWorkingDays)}
+              onChange={(e) => setForm((prev) => ({ ...prev, lookbackWorkingDays: e.target.value }))}
+            />
+            <HelperMessage>
+              The whole window: the last N working days, including today. Weekends are skipped.
+            </HelperMessage>
+          </Stack>
+        </Box>
+        <Box xcss={fieldColumnStyles}>
+          <Stack space="space.050">
+            <Label labelFor="acceptable-delay">Acceptable days of delay</Label>
+            <Textfield
+              id="acceptable-delay"
+              type="number"
+              width={FIELD_WIDTH}
+              min={0}
+              max={maxDelayFor(form.lookbackWorkingDays)}
+              value={String(form.acceptableDelayDays)}
+              onChange={(e) => setForm((prev) => ({ ...prev, acceptableDelayDays: e.target.value }))}
+            />
+            <HelperMessage>
+              How many of the most recent working days are excused — time for them may still be
+              missing. 0 means today’s time is already expected.
+            </HelperMessage>
+          </Stack>
+        </Box>
       </Inline>
       <HelperMessage>
         Time has to be logged for every working day of the window, not just for some of them. The
@@ -114,36 +137,41 @@ export const SettingsTab = ({ settings, schedule, onSettingsChange }) => {
       </HelperMessage>
 
       <Inline space="space.200" alignBlock="start">
-        <Stack space="space.050">
-          <Label labelFor="run-times">Run times</Label>
-          <Textfield
-            id="run-times"
-            width={260}
-            value={form.runTimes}
-            placeholder="09:00, 15:00"
-            onChange={(e) => setForm((prev) => ({ ...prev, runTimes: e.target.value }))}
-          />
-          <HelperMessage>Reminders to the tracked people themselves.</HelperMessage>
-        </Stack>
-        <Stack space="space.050">
-          <Label labelFor="manager-run-times">Manager run times</Label>
-          <Textfield
-            id="manager-run-times"
-            width={260}
-            value={form.managerRunTimes}
-            placeholder="17:00"
-            onChange={(e) => setForm((prev) => ({ ...prev, managerRunTimes: e.target.value }))}
-          />
-          <HelperMessage>
-            Digests and all-clear notes to managers. Independent of the schedule on the left.
-          </HelperMessage>
-        </Stack>
+        <Box xcss={fieldColumnStyles}>
+          <Stack space="space.050">
+            <Label labelFor="run-times">Run times</Label>
+            <Textfield
+              id="run-times"
+              width={FIELD_WIDTH}
+              value={form.runTimes}
+              placeholder="09:00, 15:00"
+              onChange={(e) => setForm((prev) => ({ ...prev, runTimes: e.target.value }))}
+            />
+            <HelperMessage>Reminders to the tracked people themselves.</HelperMessage>
+          </Stack>
+        </Box>
+        <Box xcss={fieldColumnStyles}>
+          <Stack space="space.050">
+            <Label labelFor="manager-run-times">Manager run times</Label>
+            <Textfield
+              id="manager-run-times"
+              width={FIELD_WIDTH}
+              value={form.managerRunTimes}
+              placeholder="17:00"
+              onChange={(e) => setForm((prev) => ({ ...prev, managerRunTimes: e.target.value }))}
+            />
+            <HelperMessage>
+              Digests and all-clear notes to managers. Independent of the schedule on the left.
+            </HelperMessage>
+          </Stack>
+        </Box>
       </Inline>
       <HelperMessage>
         24-hour clock in UTC, comma-separated. Each time fires at most once a day. The scheduled
         trigger wakes up once an hour, so a check starts at the first wake-up after the time you
         set{scheduleInfo?.catchUpMinutes ? `, and is dropped if that turns out to be more than ${scheduleInfo.catchUpMinutes} minutes late` : ''}.
-        An empty field turns that mailing off — the Run check tab still sends both.
+        An empty field turns that mailing off — the Run check tab still sends both. Whether weekends
+        and holidays are skipped is decided by the switches on the “Holidays” tab.
       </HelperMessage>
 
       {scheduleInfo && (
@@ -159,23 +187,6 @@ export const SettingsTab = ({ settings, schedule, onSettingsChange }) => {
           </Text>
         </SectionMessage>
       )}
-
-      <Inline space="space.400" alignBlock="center" shouldWrap>
-        <Checkbox
-          isChecked={form.skipWeekends}
-          label="Don’t run the scheduled check on weekends"
-          onChange={(e) => setForm((prev) => ({ ...prev, skipWeekends: e.target.checked }))}
-        />
-        <Checkbox
-          isChecked={form.skipHolidays}
-          label="Take the holiday calendar into account"
-          onChange={(e) => setForm((prev) => ({ ...prev, skipHolidays: e.target.checked }))}
-        />
-      </Inline>
-      <HelperMessage>
-        A holiday is not a working day: it never gets into the checked window, and the scheduled
-        run is skipped on it. Manage the list on the “Holidays” tab.
-      </HelperMessage>
 
       <Inline space="space.200" alignBlock="start" grow="fill">
         <Box xcss={templateFieldStyles}>

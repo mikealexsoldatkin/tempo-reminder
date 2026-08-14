@@ -128,8 +128,9 @@ const AdminPage = () => {
           <Box paddingBlockStart="space.200">
             <HolidaysTab
               holidays={state.holidays}
-              skipHolidays={state.settings.skipHolidays}
+              settings={state.settings}
               onHolidaysChange={(holidays) => patch({ holidays })}
+              onSettingsChange={(settings) => patch({ settings })}
             />
           </Box>
         </TabPanel>
