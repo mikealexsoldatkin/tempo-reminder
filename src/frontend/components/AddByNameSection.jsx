@@ -7,20 +7,13 @@ import { candidateActions } from './candidateActions';
 
 /**
  * Поиск пользователей Jira по First + Last name (Jira ищет и по email) и батчевое
- * добавление — под наблюдение, в детальные отчёты или в менеджеры.
+ * добавление — под наблюдение и/или в менеджеры.
  */
-export const AddByNameSection = ({
-  trackedIds,
-  detailedIds,
-  managerIds,
-  onUsersChange,
-  onDetailedUsersChange,
-  onManagersChange,
-}) => {
+export const AddByNameSection = ({ trackedIds, managerIds, onUsersChange, onManagersChange }) => {
   const [query, setQuery] = useState('');
   const search = useCandidateSearch({
     search: (value) => api.searchUsersByName(value),
-    actions: candidateActions({ onUsersChange, onDetailedUsersChange, onManagersChange }),
+    actions: candidateActions({ onUsersChange, onManagersChange }),
   });
 
   return (
@@ -28,8 +21,7 @@ export const AddByNameSection = ({
       <Heading as="h3" size="medium">Search by name</Heading>
       <Text>
         Enter a first and last name (or part of one) — Jira searches by display name and email.
-        Tick the people you need, then put them under tracking, add them to the detailed reports
-        or mark them as managers.
+        Tick the people you need, then put them under tracking, mark them as managers, or both.
       </Text>
 
       <Label labelFor="user-name-query">User name</Label>
@@ -51,12 +43,7 @@ export const AddByNameSection = ({
         </LoadingButton>
       </Inline>
 
-      <CandidateResults
-        search={search}
-        trackedIds={trackedIds}
-        detailedIds={detailedIds}
-        managerIds={managerIds}
-      />
+      <CandidateResults search={search} trackedIds={trackedIds} managerIds={managerIds} />
     </Stack>
   );
 };

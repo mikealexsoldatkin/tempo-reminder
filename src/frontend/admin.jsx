@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import ForgeReconciler, {
   Box,
   Heading,
+  Inline,
   SectionMessage,
   Spinner,
   Stack,
@@ -10,19 +11,25 @@ import ForgeReconciler, {
   TabPanel,
   Tabs,
   Text,
+  xcss,
 } from '@forge/react';
 import { api } from './api';
 import { AddByNameSection } from './components/AddByNameSection';
 import { AddByProjectSection } from './components/AddByProjectSection';
 import { TrackedUsersTable } from './components/TrackedUsersTable';
-import { DetailedUsersTable } from './components/DetailedUsersTable';
 import { ManagersTable } from './components/ManagersTable';
 import { CredentialsTab } from './components/CredentialsTab';
 import { SettingsTab } from './components/SettingsTab';
 import { HolidaysTab } from './components/HolidaysTab';
 import { VacationsTab } from './components/VacationsTab';
 import { RunTab } from './components/RunTab';
+import { ReadinessBanner } from './components/ReadinessBanner';
 import { ErrorBoundary } from './components/ErrorBoundary';
+
+// Две секции поиска стоят рядом: каждая занимает половину ширины и ужимается
+// вместе с окном. width 100% + flexGrow внутри Inline означает «поделить поровну
+// всё, что есть», а shouldWrap на узком экране ставит их обратно друг под друга.
+const searchColumnStyles = xcss({ width: '100%', flexGrow: 1, flexBasis: '360px' });
 
 const AdminPage = () => {
   const [state, setState] = useState(null);
@@ -34,20 +41,20 @@ const AdminPage = () => {
 
   const patch = useCallback((changes) => setState((prev) => ({ ...prev, ...changes })), []);
   const onUsersChange = useCallback((trackedUsers) => patch({ trackedUsers }), [patch]);
-  const onDetailedUsersChange = useCallback((detailedUsers) => patch({ detailedUsers }), [patch]);
   const onManagersChange = useCallback((managers) => patch({ managers }), [patch]);
 
   const trackedIds = useMemo(
     () => new Set((state?.trackedUsers ?? []).map((u) => u.accountId)),
     [state?.trackedUsers]
   );
-  const detailedIds = useMemo(
-    () => new Set((state?.detailedUsers ?? []).map((u) => u.accountId)),
-    [state?.detailedUsers]
-  );
   const managerIds = useMemo(
     () => new Set((state?.managers ?? []).map((m) => m.accountId)),
     [state?.managers]
+  );
+  // Детальный отчёт — не отдельный список, а колонка получателей у отслеживаемого.
+  const detailedCount = useMemo(
+    () => (state?.trackedUsers ?? []).filter((u) => (u.detailedManagerIds ?? []).length > 0).length,
+    [state?.trackedUsers]
   );
 
   if (loadError) {
@@ -70,14 +77,24 @@ const AdminPage = () => {
     <Stack space="space.200">
       <Heading as="h2" size="large">Unlogged time reminders</Heading>
       <Text>
-        Once a day the app checks tracked Jira users against their Tempo worklogs and sends a Slack
-        DM to everyone who hasn’t logged time within the check window.
+        On a schedule you set, the app checks tracked Jira users against their Tempo worklogs. People
+        missing time get a Slack DM; their managers get a digest, and — for anyone you mark — a
+        day-by-day breakdown of what was logged.
       </Text>
 
+      <ReadinessBanner
+        settings={state.settings}
+        credentials={state.credentials}
+        trackedUsers={state.trackedUsers}
+        managers={state.managers}
+      />
+
+      {/* Порядок вкладок — это порядок первой настройки: без токенов бессмысленно
+          заводить людей, без людей — крутить параметры проверки. */}
       <Tabs id="tempo-reminder-tabs">
         <TabList>
-          <Tab>Users</Tab>
           <Tab>Access tokens</Tab>
+          <Tab>Users</Tab>
           <Tab>Check parameters</Tab>
           <Tab>Holidays</Tab>
           <Tab>Vacations</Tab>
@@ -86,49 +103,47 @@ const AdminPage = () => {
 
         <TabPanel>
           <Box paddingBlockStart="space.200">
+            <CredentialsTab
+              credentials={state.credentials}
+              onCredentialsChange={(credentials) => patch({ credentials })}
+            />
+          </Box>
+        </TabPanel>
+
+        <TabPanel>
+          <Box paddingBlockStart="space.200">
             <Stack space="space.400">
-              <AddByNameSection
-                trackedIds={trackedIds}
-                detailedIds={detailedIds}
-                managerIds={managerIds}
-                onUsersChange={onUsersChange}
-                onDetailedUsersChange={onDetailedUsersChange}
+              <Inline space="space.400" alignBlock="start" shouldWrap>
+                <Box xcss={searchColumnStyles}>
+                  <AddByNameSection
+                    trackedIds={trackedIds}
+                    managerIds={managerIds}
+                    onUsersChange={onUsersChange}
+                    onManagersChange={onManagersChange}
+                  />
+                </Box>
+                <Box xcss={searchColumnStyles}>
+                  <AddByProjectSection
+                    trackedIds={trackedIds}
+                    managerIds={managerIds}
+                    onUsersChange={onUsersChange}
+                    onManagersChange={onManagersChange}
+                  />
+                </Box>
+              </Inline>
+              {/* Менеджеры идут первыми: колонки в Tracked users выбирают из этого
+                  списка, и пустой он делает их нередактируемыми. */}
+              <ManagersTable
+                managers={state.managers}
                 onManagersChange={onManagersChange}
-              />
-              <AddByProjectSection
-                trackedIds={trackedIds}
-                detailedIds={detailedIds}
-                managerIds={managerIds}
                 onUsersChange={onUsersChange}
-                onDetailedUsersChange={onDetailedUsersChange}
-                onManagersChange={onManagersChange}
               />
               <TrackedUsersTable
                 users={state.trackedUsers}
                 managers={state.managers}
                 onUsersChange={onUsersChange}
               />
-              <DetailedUsersTable
-                users={state.detailedUsers ?? []}
-                managers={state.managers}
-                onDetailedUsersChange={onDetailedUsersChange}
-              />
-              <ManagersTable
-                managers={state.managers}
-                onManagersChange={onManagersChange}
-                onUsersChange={onUsersChange}
-                onDetailedUsersChange={onDetailedUsersChange}
-              />
             </Stack>
-          </Box>
-        </TabPanel>
-
-        <TabPanel>
-          <Box paddingBlockStart="space.200">
-            <CredentialsTab
-              credentials={state.credentials}
-              onCredentialsChange={(credentials) => patch({ credentials })}
-            />
           </Box>
         </TabPanel>
 
@@ -170,7 +185,7 @@ const AdminPage = () => {
               runStatus={state.runStatus}
               lastReport={state.lastReport}
               trackedCount={state.trackedUsers.length}
-              detailedCount={(state.detailedUsers ?? []).length}
+              detailedCount={detailedCount}
               credentials={state.credentials}
               onRunStateChange={({ runStatus, lastReport }) => patch({ runStatus, lastReport })}
             />

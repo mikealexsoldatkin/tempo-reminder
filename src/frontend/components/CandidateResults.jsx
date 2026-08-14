@@ -6,17 +6,11 @@ import { CandidateTable } from './CandidateTable';
  * Результаты поиска и действия над отмеченными — общий блок для поиска по имени
  * и по ключу проекта: обе секции отличаются только тем, как ищут людей.
  *
- * Выделение одно на все действия: отмеченных можно поставить под наблюдение, завести
- * им детальный отчёт или назначить менеджерами. Это три независимых списка, и один
- * человек может попасть в любые из них.
+ * Выделение одно на оба действия и после каждого сохраняется: один и тот же человек
+ * может быть и отслеживаемым, и менеджером, поэтому «поставить под наблюдение» и
+ * «назначить менеджером» можно нажать подряд, не отмечая его заново.
  */
-export const CandidateResults = ({
-  search,
-  trackedIds,
-  detailedIds,
-  managerIds,
-  showRoles = false,
-}) => {
+export const CandidateResults = ({ search, trackedIds, managerIds, showRoles = false }) => {
   if (search.message && !(search.candidates && search.candidates.length > 0)) {
     return (
       <SectionMessage appearance={search.message.appearance}>
@@ -40,7 +34,6 @@ export const CandidateResults = ({
         selected={search.selected}
         onToggle={search.toggle}
         trackedIds={trackedIds}
-        detailedIds={detailedIds}
         managerIds={managerIds}
         showRoles={showRoles}
       />
@@ -53,13 +46,6 @@ export const CandidateResults = ({
           onClick={() => search.submitSelected('track')}
         >
           Track ({search.selected.size})
-        </LoadingButton>
-        <LoadingButton
-          isLoading={search.busyAction === 'detailed'}
-          isDisabled={search.selected.size === 0 || search.busyAction !== null}
-          onClick={() => search.submitSelected('detailed')}
-        >
-          Track in detail ({search.selected.size})
         </LoadingButton>
         <LoadingButton
           isLoading={search.busyAction === 'manager'}

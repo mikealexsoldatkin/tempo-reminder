@@ -10,7 +10,6 @@ import { DEFAULT_HOLIDAYS, holidayDate, normalizeHoliday } from './holidays.js';
 const KEY = {
   settings: 'settings',
   trackedUsers: 'tracked-users',
-  detailedUsers: 'detailed-users',
   managers: 'managers',
   credentialsMeta: 'credentials-meta',
   runStatus: 'run-status',
@@ -18,6 +17,11 @@ const KEY = {
   scheduleState: 'schedule-state',
   holidays: 'holidays',
 };
+
+// Прежде отслеживаемые и детально отслеживаемые жили двумя независимыми списками.
+// Теперь список один, а глубина слежки выражена колонкой менеджеров, поэтому
+// старый ключ остаётся только ради разовой миграции (см. mergeLegacyDetailedUsers).
+const LEGACY_DETAILED_USERS_KEY = 'detailed-users';
 
 const SECRET_KEY = {
   tempoToken: 'tempo-token',
@@ -67,7 +71,8 @@ export const DEFAULT_SETTINGS = {
   // Плейсхолдеры: {from}, {to}, {days}, {name} и {count} — размер команды.
   managerAllClearTemplate:
     ':white_check_mark: Hi {name}! Everyone you manage has logged their time in Tempo for every one of the last {days} working days ({from} — {to}). Nothing to chase 🎉',
-  // Детальный отчёт по одному сотруднику из списка Detailed tracking users.
+  // Детальный отчёт по одному сотруднику — тому, кому проставлены получатели
+  // в колонке «Managers who get the detailed report».
   // Плейсхолдеры: {name} — имя менеджера-получателя, {user} — чей это отчёт,
   // {from}, {to}, {days} и {report} — сам разбор по дням.
   detailedReportTemplate:
@@ -237,36 +242,107 @@ function peopleList(storageKey, { onCreate = () => ({}), normalize = (person) =>
   return { read, write, add, remove, setEmail, cacheSlackIds };
 }
 
-// managerIds и calendarName появились позже самих записей, поэтому подставляем
-// значения по умолчанию на чтении.
+/**
+ * Отслеживаемые сотрудники — единственный список людей, за которыми следит
+ * приложение. Быть в нём значит «проверяем в Tempo и пишем лично»; кому уходят
+ * сообщения о человеке, задают два независимых набора менеджеров:
+ *  - managerIds — кому уйдёт дайджест «не отчитался»;
+ *  - detailedManagerIds — кому уйдёт разбор его worklog'ов по дням.
+ * Пустые наборы — нормальное состояние: сам сотрудник напоминание всё равно получит.
+ *
+ * Поля добавлялись позже самих записей, поэтому значения по умолчанию подставляются
+ * на чтении.
+ */
 const trackedUsers = peopleList(KEY.trackedUsers, {
-  onCreate: () => ({ managerIds: [], calendarName: null }),
+  onCreate: () => ({ managerIds: [], detailedManagerIds: [], calendarName: null }),
   normalize: (user) => ({
     ...user,
     managerIds: user.managerIds ?? [],
+    detailedManagerIds: user.detailedManagerIds ?? [],
     calendarName: user.calendarName ?? null,
   }),
-});
-
-// Детально отслеживаемые: список независим от Tracked users — человек может быть
-// в обоих, только в одном или ни в одном. Своего email им не нужно (сообщение уходит
-// менеджеру), но общая механика списка того не стоит, чтобы её здесь ломать.
-const detailedUsers = peopleList(KEY.detailedUsers, {
-  onCreate: () => ({ managerIds: [] }),
-  normalize: (user) => ({ ...user, managerIds: user.managerIds ?? [] }),
 });
 
 const managers = peopleList(KEY.managers);
 
 /* --------------------- отслеживаемые пользователи --------------------- */
 
-export const getTrackedUsers = () => trackedUsers.read();
+export const getTrackedUsers = async () => {
+  await mergeLegacyDetailedUsers();
+  return trackedUsers.read();
+};
+
+/**
+ * Разовая миграция со времён двух списков: записи из `detailed-users` переезжают
+ * в `detailedManagerIds` единственного списка.
+ *
+ * Человек, которого отслеживали только детально, после переезда становится обычным
+ * отслеживаемым и начинает получать напоминания сам — раньше их получали лишь те,
+ * кто был в Tracked users. Это осознанное следствие объединения: одна таблица не
+ * может означать «следим» и «не следим» одновременно.
+ *
+ * Флаг в модуле спасает от повторного чтения ключа на тёплом инстансе; сама
+ * миграция идемпотентна, поэтому холодный старт после неё ничего не сломает.
+ */
+let legacyDetailedUsersMerged = false;
+
+async function mergeLegacyDetailedUsers() {
+  if (legacyDetailedUsersMerged) return;
+
+  const legacy = await kvs.get(LEGACY_DETAILED_USERS_KEY);
+  if (!Array.isArray(legacy)) {
+    legacyDetailedUsersMerged = true;
+    return;
+  }
+
+  const people = await trackedUsers.read();
+  const byId = new Map(people.map((person) => [person.accountId, person]));
+
+  for (const stale of legacy) {
+    if (!stale?.accountId) continue;
+    const detailedManagerIds = [...new Set(stale.managerIds ?? [])];
+    const existing = byId.get(stale.accountId);
+    if (existing) {
+      // Оба списка могли назначать менеджеров одному человеку — детальные
+      // получатели берутся из старой записи, дайджестовые остаются своими.
+      existing.detailedManagerIds = [...new Set([...existing.detailedManagerIds, ...detailedManagerIds])];
+      continue;
+    }
+    byId.set(stale.accountId, {
+      accountId: stale.accountId,
+      displayName: stale.displayName || stale.accountId,
+      email: stale.email ?? null,
+      emailSource: stale.emailSource ?? null,
+      slackUserId: stale.slackUserId ?? null,
+      addedAt: stale.addedAt ?? new Date().toISOString(),
+      managerIds: [],
+      detailedManagerIds,
+      calendarName: null,
+    });
+  }
+
+  await trackedUsers.write([...byId.values()]);
+  await kvs.delete(LEGACY_DETAILED_USERS_KEY);
+  legacyDetailedUsersMerged = true;
+  console.log(`Списки людей объединены: перенесено записей из detailed-users — ${legacy.length}`);
+}
+
 export const addTrackedUsers = async (candidates) => {
+  await mergeLegacyDetailedUsers();
   const { people, added, skipped } = await trackedUsers.add(candidates);
   return { users: people, added, skipped };
 };
-export const removeTrackedUsers = (accountIds) => trackedUsers.remove(accountIds);
-export const setTrackedUserEmail = (accountId, email) => trackedUsers.setEmail(accountId, email);
+
+export const removeTrackedUsers = async (accountIds) => {
+  await mergeLegacyDetailedUsers();
+  return trackedUsers.remove(accountIds);
+};
+
+export const setTrackedUserEmail = async (accountId, email) => {
+  await mergeLegacyDetailedUsers();
+  return trackedUsers.setEmail(accountId, email);
+};
+
 export const cacheSlackUserIds = (idsByAccountId) => trackedUsers.cacheSlackIds(idsByAccountId);
 
 /**
@@ -275,7 +351,7 @@ export const cacheSlackUserIds = (idsByAccountId) => trackedUsers.cacheSlackIds(
  * через запятую — совпадения любого из них достаточно.
  */
 export async function setTrackedUserCalendarName(accountId, calendarName) {
-  const users = await trackedUsers.read();
+  const users = await getTrackedUsers();
   const user = users.find((u) => u.accountId === accountId);
   if (!user) throw new Error(`User ${accountId} is not tracked`);
 
@@ -285,36 +361,30 @@ export async function setTrackedUserCalendarName(accountId, calendarName) {
 }
 
 /**
- * Назначает человеку менеджеров. Принимаем только тех, кто есть в списке
+ * Назначает сотруднику менеджеров. Принимаем только тех, кто есть в списке
  * менеджеров: иначе в записи копились бы ссылки на давно удалённых людей.
  *
- * Колонка Managers есть у обоих списков людей, но значит в них разное: у Tracked
- * users — кому уйдёт дайджест о долге, у Detailed tracking users — кто получит
- * подробный отчёт. Механика одна, поэтому она здесь.
+ * Наборов два, и значат они разное: `managerIds` — кому уйдёт дайджест «не
+ * отчитался», `detailedManagerIds` — кому уйдёт разбор worklog'ов по дням.
+ * Механика одна, поэтому поле приходит параметром.
+ *
+ * @param {'managerIds'|'detailedManagerIds'} field
  */
-async function assignManagers(list, listName, accountId, managerIds) {
+async function assignManagers(field, accountId, managerIds) {
   const known = new Set((await managers.read()).map((m) => m.accountId));
-  const people = await list.read();
+  const people = await getTrackedUsers();
   const person = people.find((p) => p.accountId === accountId);
-  if (!person) throw new Error(`User ${accountId} is not in the ${listName} list`);
+  if (!person) throw new Error(`User ${accountId} is not tracked`);
 
-  person.managerIds = [...new Set(managerIds ?? [])].filter((id) => known.has(id));
-  return list.write(people);
+  person[field] = [...new Set(managerIds ?? [])].filter((id) => known.has(id));
+  return trackedUsers.write(people);
 }
 
 export const setTrackedUserManagers = (accountId, managerIds) =>
-  assignManagers(trackedUsers, 'tracked users', accountId, managerIds);
+  assignManagers('managerIds', accountId, managerIds);
 
-/* ------------------ детально отслеживаемые пользователи ------------------ */
-
-export const getDetailedUsers = () => detailedUsers.read();
-export const addDetailedUsers = async (candidates) => {
-  const { people, added, skipped } = await detailedUsers.add(candidates);
-  return { detailedUsers: people, added, skipped };
-};
-export const removeDetailedUsers = (accountIds) => detailedUsers.remove(accountIds);
-export const setDetailedUserManagers = (accountId, managerIds) =>
-  assignManagers(detailedUsers, 'detailed tracking', accountId, managerIds);
+export const setTrackedUserDetailedManagers = (accountId, managerIds) =>
+  assignManagers('detailedManagerIds', accountId, managerIds);
 
 /* ------------------------------ менеджеры ------------------------------ */
 
@@ -327,31 +397,29 @@ export const setManagerEmail = (accountId, email) => managers.setEmail(accountId
 export const cacheManagerSlackUserIds = (idsByAccountId) => managers.cacheSlackIds(idsByAccountId);
 
 /**
- * Удаление менеджера снимает его и со всех подчинённых — в обоих списках: висящая
+ * Удаление менеджера снимает его со всех сотрудников — из обоих наборов: висящая
  * ссылка на удалённого человека молча выключила бы и дайджест, и детальный отчёт.
  */
 export async function removeManagers(accountIds) {
   const drop = new Set(accountIds ?? []);
   const next = await managers.remove(accountIds);
-
-  return {
-    managers: next,
-    users: await detachManagers(trackedUsers, drop),
-    detailedUsers: await detachManagers(detailedUsers, drop),
-  };
+  return { managers: next, users: await detachManagers(drop) };
 }
 
-async function detachManagers(list, drop) {
-  const people = await list.read();
+async function detachManagers(drop) {
+  const people = await getTrackedUsers();
   let changed = false;
+
   for (const person of people) {
-    const kept = (person.managerIds ?? []).filter((id) => !drop.has(id));
-    if (kept.length !== (person.managerIds ?? []).length) {
-      person.managerIds = kept;
-      changed = true;
+    for (const field of ['managerIds', 'detailedManagerIds']) {
+      const kept = (person[field] ?? []).filter((id) => !drop.has(id));
+      if (kept.length !== (person[field] ?? []).length) {
+        person[field] = kept;
+        changed = true;
+      }
     }
   }
-  return changed ? list.write(people) : people;
+  return changed ? trackedUsers.write(people) : people;
 }
 
 /* ------------------------------ праздники ------------------------------ */

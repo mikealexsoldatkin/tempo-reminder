@@ -59,8 +59,9 @@ export const RunTab = ({
 
   const isRunning = runStatus?.state === 'queued' || runStatus?.state === 'running';
   const tokensMissing = !credentials.tempoToken?.isSet || !credentials.slackBotToken?.isSet;
-  // Списки независимы: непустого хватит любого — прогон сделает то, для чего есть люди.
-  const nobodyToCheck = trackedCount === 0 && detailedCount === 0;
+  // Детальные отчёты — подмножество отслеживаемых, поэтому проверять достаточно
+  // один список: пуст он — проверять некого вообще.
+  const nobodyToCheck = trackedCount === 0;
 
   const refresh = useCallback(async () => {
     try {
@@ -110,7 +111,7 @@ export const RunTab = ({
 
         {nobodyToCheck && (
           <SectionMessage appearance="warning">
-            <Text>Both people lists are empty — there is nobody to check.</Text>
+            <Text>Nobody is tracked yet — there is nobody to check.</Text>
           </SectionMessage>
         )}
 
@@ -159,8 +160,9 @@ export const RunTab = ({
                 Real Slack messages will be sent to every tracked user (currently {trackedCount})
                 who has no Tempo entries within the check window, and to every manager on the list —
                 either a digest, or the “everyone has logged time” note. Managers also get a
-                detailed report for each of the {detailedCount} people tracked in detail. A manual
-                run ignores both schedules, the weekday-only rule and sends everything.
+                detailed report for each of the {detailedCount} people who have someone in the
+                “detailed report” column. A manual run ignores both schedules and the weekday-only
+                rule, and sends everything.
               </Text>
             </ModalBody>
             <ModalFooter>
@@ -354,7 +356,7 @@ const DetailedReports = ({ report }) => {
         <SectionMessage appearance="warning">
           <Text>
             {totals.withoutManager} of them have no manager assigned — their reports went nowhere.
-            Fill in the Managers column in the Detailed tracking users table.
+            Fill in the “Managers who get the detailed report” column on the Users tab.
           </Text>
         </SectionMessage>
       )}

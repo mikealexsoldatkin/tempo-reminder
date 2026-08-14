@@ -9,18 +9,11 @@ import { candidateActions } from './candidateActions';
  * Пакетное добавление по ключу проекта — аналог прежнего getProjectPeople():
  * подтягиваем всех, кого можно назначить на задачи проекта, и добавляем батчем.
  */
-export const AddByProjectSection = ({
-  trackedIds,
-  detailedIds,
-  managerIds,
-  onUsersChange,
-  onDetailedUsersChange,
-  onManagersChange,
-}) => {
+export const AddByProjectSection = ({ trackedIds, managerIds, onUsersChange, onManagersChange }) => {
   const [projectKey, setProjectKey] = useState('');
   const search = useCandidateSearch({
     search: (value) => api.searchProjectMembers(value),
-    actions: candidateActions({ onUsersChange, onDetailedUsersChange, onManagersChange }),
+    actions: candidateActions({ onUsersChange, onManagersChange }),
   });
 
   return (
@@ -54,7 +47,6 @@ export const AddByProjectSection = ({
       <CandidateResults
         search={search}
         trackedIds={trackedIds}
-        detailedIds={detailedIds}
         managerIds={managerIds}
         showRoles
       />

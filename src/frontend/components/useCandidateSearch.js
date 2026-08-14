@@ -80,7 +80,9 @@ export const useCandidateSearch = ({ search, actions }) => {
       setMessage(null);
       try {
         const text = await actions[actionKey](chosen);
-        setSelected(new Set());
+        // Выделение намеренно остаётся: один человек может быть и отслеживаемым,
+        // и менеджером, а сброс заставлял бы отмечать его заново ради второго
+        // действия. Что действие уже применено, видно по лозенгам в таблице.
         setMessage({ appearance: 'success', text });
       } catch (e) {
         setMessage({ appearance: 'error', text: e.message });

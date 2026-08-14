@@ -19,12 +19,10 @@ export const api = {
   setTrackedUserEmail: (accountId, email) => call('setTrackedUserEmail', { accountId, email }),
   setTrackedUserManagers: (accountId, managerIds) =>
     call('setTrackedUserManagers', { accountId, managerIds }),
+  setTrackedUserDetailedManagers: (accountId, managerIds) =>
+    call('setTrackedUserDetailedManagers', { accountId, managerIds }),
   setTrackedUserCalendarName: (accountId, calendarName) =>
     call('setTrackedUserCalendarName', { accountId, calendarName }),
-  addDetailedUsers: (users) => call('addDetailedUsers', { users }),
-  removeDetailedUsers: (accountIds) => call('removeDetailedUsers', { accountIds }),
-  setDetailedUserManagers: (accountId, managerIds) =>
-    call('setDetailedUserManagers', { accountId, managerIds }),
   addManagers: (users) => call('addManagers', { users }),
   removeManagers: (accountIds) => call('removeManagers', { accountIds }),
   setManagerEmail: (accountId, email) => call('setManagerEmail', { accountId, email }),

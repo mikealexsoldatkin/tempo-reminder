@@ -10,6 +10,12 @@ import {
   Label,
   LoadingButton,
   Lozenge,
+  Modal,
+  ModalBody,
+  ModalFooter,
+  ModalHeader,
+  ModalTitle,
+  ModalTransition,
   SectionMessage,
   Select,
   Stack,
@@ -72,6 +78,12 @@ export const HolidaysTab = ({ holidays, settings, onHolidaysChange, onSettingsCh
   const [isBusy, setIsBusy] = useState(false);
   const [selected, setSelected] = useState(new Set());
   const [message, setMessage] = useState(null);
+  // Форма добавления живёт в модальном окне: на вкладке она занимала экран под
+  // действие, которое делают несколько раз за всё время. Ошибка правила остаётся
+  // внутри окна — закрывать его, чтобы прочитать причину и набрать всё заново,
+  // было бы худшим из возможных ответов на опечатку.
+  const [isAddOpen, setIsAddOpen] = useState(false);
+  const [addError, setAddError] = useState(null);
 
   const isFixed = form.type.value === 'fixed';
 
@@ -121,6 +133,12 @@ export const HolidaysTab = ({ holidays, settings, onHolidaysChange, onSettingsCh
     }
   };
 
+  const openAdd = () => {
+    setAddError(null);
+    setMessage(null);
+    setIsAddOpen(true);
+  };
+
   const add = async () => {
     const holiday = isFixed
       ? { name: form.name, type: 'fixed', month: form.month.value, day: Number(form.day) }
@@ -133,10 +151,21 @@ export const HolidaysTab = ({ holidays, settings, onHolidaysChange, onSettingsCh
           offsetDays: Number(form.offsetDays || 0),
         };
 
-    // Введённое не стираем, если бэкенд не принял правило: иначе исправлять
-    // опечатку пришлось бы, набирая всё заново.
-    const added = await mutate(() => api.addHoliday(holiday), 'Holiday added');
-    if (added) setForm((prev) => ({ ...EMPTY_FORM, type: prev.type }));
+    setIsBusy(true);
+    setAddError(null);
+    try {
+      onHolidaysChange((await api.addHoliday(holiday)).holidays);
+      // Введённое стираем только после успеха: иначе исправлять опечатку пришлось
+      // бы, набирая всё заново. Тип правила остаётся — праздники обычно заводят
+      // пачкой одного вида.
+      setForm((prev) => ({ ...EMPTY_FORM, type: prev.type }));
+      setIsAddOpen(false);
+      setMessage({ appearance: 'success', text: 'Holiday added' });
+    } catch (e) {
+      setAddError(e.message);
+    } finally {
+      setIsBusy(false);
+    }
   };
 
   const head = {
@@ -231,6 +260,9 @@ export const HolidaysTab = ({ holidays, settings, onHolidaysChange, onSettingsCh
         )}
 
         <Inline space="space.100">
+          <Button appearance="primary" isDisabled={isBusy} onClick={openAdd}>
+            Add a holiday
+          </Button>
           <LoadingButton
             appearance="danger"
             isLoading={isBusy}
@@ -249,127 +281,144 @@ export const HolidaysTab = ({ holidays, settings, onHolidaysChange, onSettingsCh
         </Inline>
       </Stack>
 
-      <Stack space="space.150">
-        <Heading as="h4" size="small">Add a holiday</Heading>
+      <ModalTransition>
+        {isAddOpen && (
+          <Modal onClose={() => setIsAddOpen(false)}>
+            <ModalHeader>
+              <ModalTitle>Add a holiday</ModalTitle>
+            </ModalHeader>
+            <ModalBody>
+              <Stack space="space.150">
+                <Inline space="space.200" alignBlock="start" shouldWrap>
+                  <Stack space="space.050">
+                    <Label labelFor="holiday-name">Name</Label>
+                    <Textfield
+                      id="holiday-name"
+                      width={240}
+                      value={form.name}
+                      placeholder="Company day off"
+                      onChange={(e) => set({ name: e.target.value })}
+                    />
+                  </Stack>
+                  <Stack space="space.050">
+                    <Label labelFor="holiday-type">Repeats</Label>
+                    <Box xcss={WIDE}>
+                      <Select
+                        id="holiday-type"
+                        options={TYPES}
+                        value={form.type}
+                        onChange={(option) => set({ type: option })}
+                      />
+                    </Box>
+                  </Stack>
+                </Inline>
 
-        <Inline space="space.200" alignBlock="start" shouldWrap>
-          <Stack space="space.050">
-            <Label labelFor="holiday-name">Name</Label>
-            <Textfield
-              id="holiday-name"
-              width={240}
-              value={form.name}
-              placeholder="Company day off"
-              onChange={(e) => set({ name: e.target.value })}
-            />
-          </Stack>
-          <Stack space="space.050">
-            <Label labelFor="holiday-type">Repeats</Label>
-            <Box xcss={WIDE}>
-              <Select
-                id="holiday-type"
-                options={TYPES}
-                value={form.type}
-                onChange={(option) => set({ type: option })}
-              />
-            </Box>
-          </Stack>
-        </Inline>
+                {isFixed ? (
+                  <Inline space="space.200" alignBlock="start" shouldWrap>
+                    <Stack space="space.050">
+                      <Label labelFor="holiday-month">Month</Label>
+                      <Box xcss={MEDIUM}>
+                        <Select
+                          id="holiday-month"
+                          options={MONTHS}
+                          value={form.month}
+                          onChange={(option) => set({ month: option })}
+                        />
+                      </Box>
+                    </Stack>
+                    <Stack space="space.050">
+                      <Label labelFor="holiday-day">Day</Label>
+                      <Textfield
+                        id="holiday-day"
+                        type="number"
+                        width={100}
+                        min={1}
+                        max={31}
+                        value={form.day}
+                        onChange={(e) => set({ day: e.target.value })}
+                      />
+                    </Stack>
+                  </Inline>
+                ) : (
+                  <Stack space="space.100">
+                    <Inline space="space.200" alignBlock="start" shouldWrap>
+                      <Stack space="space.050">
+                        <Label labelFor="holiday-position">Which one</Label>
+                        <Box xcss={NARROW}>
+                          <Select
+                            id="holiday-position"
+                            options={POSITIONS}
+                            value={form.position}
+                            onChange={(option) => set({ position: option })}
+                          />
+                        </Box>
+                      </Stack>
+                      <Stack space="space.050">
+                        <Label labelFor="holiday-weekday">Weekday</Label>
+                        <Box xcss={MEDIUM}>
+                          <Select
+                            id="holiday-weekday"
+                            options={WEEKDAYS}
+                            value={form.weekday}
+                            onChange={(option) => set({ weekday: option })}
+                          />
+                        </Box>
+                      </Stack>
+                      <Stack space="space.050">
+                        <Label labelFor="holiday-month-nth">Of month</Label>
+                        <Box xcss={MEDIUM}>
+                          <Select
+                            id="holiday-month-nth"
+                            options={MONTHS}
+                            value={form.month}
+                            onChange={(option) => set({ month: option })}
+                          />
+                        </Box>
+                      </Stack>
+                      <Stack space="space.050">
+                        <Label labelFor="holiday-offset">Shift, days</Label>
+                        <Textfield
+                          id="holiday-offset"
+                          type="number"
+                          width={100}
+                          min={-6}
+                          max={6}
+                          value={form.offsetDays}
+                          onChange={(e) => set({ offsetDays: e.target.value })}
+                        />
+                      </Stack>
+                    </Inline>
+                    <HelperMessage>
+                      The shift is for days that hang off another holiday: the day after Thanksgiving is
+                      “4th Thursday of November + 1 day”, not the 4th Friday — in years that start November
+                      on a Friday those are different days.
+                    </HelperMessage>
+                  </Stack>
+                )}
 
-        {isFixed ? (
-          <Inline space="space.200" alignBlock="start" shouldWrap>
-            <Stack space="space.050">
-              <Label labelFor="holiday-month">Month</Label>
-              <Box xcss={MEDIUM}>
-                <Select
-                  id="holiday-month"
-                  options={MONTHS}
-                  value={form.month}
-                  onChange={(option) => set({ month: option })}
-                />
-              </Box>
-            </Stack>
-            <Stack space="space.050">
-              <Label labelFor="holiday-day">Day</Label>
-              <Textfield
-                id="holiday-day"
-                type="number"
-                width={100}
-                min={1}
-                max={31}
-                value={form.day}
-                onChange={(e) => set({ day: e.target.value })}
-              />
-            </Stack>
-          </Inline>
-        ) : (
-          <Stack space="space.100">
-            <Inline space="space.200" alignBlock="start" shouldWrap>
-              <Stack space="space.050">
-                <Label labelFor="holiday-position">Which one</Label>
-                <Box xcss={NARROW}>
-                  <Select
-                    id="holiday-position"
-                    options={POSITIONS}
-                    value={form.position}
-                    onChange={(option) => set({ position: option })}
-                  />
-                </Box>
+                {addError && (
+                  <SectionMessage appearance="error">
+                    <Text>{addError}</Text>
+                  </SectionMessage>
+                )}
               </Stack>
-              <Stack space="space.050">
-                <Label labelFor="holiday-weekday">Weekday</Label>
-                <Box xcss={MEDIUM}>
-                  <Select
-                    id="holiday-weekday"
-                    options={WEEKDAYS}
-                    value={form.weekday}
-                    onChange={(option) => set({ weekday: option })}
-                  />
-                </Box>
-              </Stack>
-              <Stack space="space.050">
-                <Label labelFor="holiday-month-nth">Of month</Label>
-                <Box xcss={MEDIUM}>
-                  <Select
-                    id="holiday-month-nth"
-                    options={MONTHS}
-                    value={form.month}
-                    onChange={(option) => set({ month: option })}
-                  />
-                </Box>
-              </Stack>
-              <Stack space="space.050">
-                <Label labelFor="holiday-offset">Shift, days</Label>
-                <Textfield
-                  id="holiday-offset"
-                  type="number"
-                  width={100}
-                  min={-6}
-                  max={6}
-                  value={form.offsetDays}
-                  onChange={(e) => set({ offsetDays: e.target.value })}
-                />
-              </Stack>
-            </Inline>
-            <HelperMessage>
-              The shift is for days that hang off another holiday: the day after Thanksgiving is
-              “4th Thursday of November + 1 day”, not the 4th Friday — in years that start November
-              on a Friday those are different days.
-            </HelperMessage>
-          </Stack>
+            </ModalBody>
+            <ModalFooter>
+              <Button appearance="subtle" isDisabled={isBusy} onClick={() => setIsAddOpen(false)}>
+                Cancel
+              </Button>
+              <LoadingButton
+                appearance="primary"
+                isLoading={isBusy}
+                isDisabled={form.name.trim().length === 0}
+                onClick={add}
+              >
+                Add holiday
+              </LoadingButton>
+            </ModalFooter>
+          </Modal>
         )}
-
-        <Inline space="space.100">
-          <LoadingButton
-            appearance="primary"
-            isLoading={isBusy}
-            isDisabled={form.name.trim().length === 0}
-            onClick={add}
-          >
-            Add holiday
-          </LoadingButton>
-        </Inline>
-      </Stack>
+      </ModalTransition>
 
       {message && (
         <SectionMessage appearance={message.appearance}>

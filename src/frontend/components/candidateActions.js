@@ -6,23 +6,19 @@ import { api } from '../api.js';
  * Что можно сделать с отмеченными кандидатами. Обе секции поиска предлагают одно
  * и то же, поэтому действия описаны один раз здесь.
  *
+ * Глубина слежки отдельным действием не является: человек добавляется в
+ * отслеживаемые, а кому уходит детальный отчёт — решает колонка в таблице.
+ *
  * Каждое действие возвращает текст об успехе: формулировки у списков разные,
  * а сам хук поиска про их смысл ничего не знает.
  */
-export const candidateActions = ({ onUsersChange, onDetailedUsersChange, onManagersChange }) => ({
+export const candidateActions = ({ onUsersChange, onManagersChange }) => ({
   track: async (chosen) => {
     const result = await api.addTrackedUsers(chosen);
     onUsersChange(result.users);
-    return `Now tracked: ${result.added}${result.skipped > 0 ? `, already tracked: ${result.skipped}` : ''}`;
-  },
-
-  detailed: async (chosen) => {
-    const result = await api.addDetailedUsers(chosen);
-    onDetailedUsersChange(result.detailedUsers);
     return (
-      `Now tracked in detail: ${result.added}` +
-      `${result.skipped > 0 ? `, already there: ${result.skipped}` : ''}` +
-      '. Pick who receives their reports in the Detailed tracking users table.'
+      `Now tracked: ${result.added}${result.skipped > 0 ? `, already tracked: ${result.skipped}` : ''}` +
+      '. Pick who hears about them in the Tracked users table.'
     );
   },
 

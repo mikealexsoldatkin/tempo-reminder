@@ -2,7 +2,6 @@ import {
   cacheManagerSlackUserIds,
   cacheSlackUserIds,
   getCredentials,
-  getDetailedUsers,
   getHandledRunTimes,
   getHolidays,
   getManagers,
@@ -68,7 +67,7 @@ const TEMPO_USER_PAUSE_MS = 250;
  * Один прогон проверки: кто из отслеживаемых пользователей не репортился в Tempo
  * за последние N рабочих дней. Такому человеку уходит DM, а его менеджерам —
  * дайджест со списком подчинённых. Вместе с дайджестами уходят детальные отчёты
- * по тем, за кем следят глубоко (Detailed tracking users): по одному сообщению на
+ * по тем, кому проставлены получатели детального отчёта: по одному сообщению на
  * человека, с разбором окна по дням. Что именно рассылать, решает расписание;
  * ручной запуск делает всё сразу.
  *
@@ -122,17 +121,19 @@ export async function runReminderCheck({ trigger, requestedBy = null, now = new 
     }, schedule);
   }
 
-  const [users, detailedUsers] = await Promise.all([getTrackedUsers(), getDetailedUsers()]);
-  // Списки независимы: один может быть заполнен без другого, и прогон осмыслен,
-  // пока непуст хотя бы один из них.
-  if (users.length === 0 && detailedUsers.length === 0) {
+  const users = await getTrackedUsers();
+  // Детальный отчёт — не отдельный список людей, а глубина слежки за теми же
+  // отслеживаемыми: его получают менеджеры, проставленные человеку во второй
+  // колонке. Никого не проставили — разбирать по дням некому и незачем.
+  const detailedUsers = users.filter((user) => (user.detailedManagerIds ?? []).length > 0);
+  if (users.length === 0) {
     return finish({
       trigger,
       requestedBy,
       startedAt,
       window,
       status: 'skipped',
-      message: 'Both people lists are empty — add users in the app settings',
+      message: 'The tracked users list is empty — add users in the app settings',
     }, schedule);
   }
 
@@ -204,12 +205,11 @@ export async function runReminderCheck({ trigger, requestedBy = null, now = new 
   // Календарь читается до отправки, чтобы такие дни исчезли из пропущенных ещё
   // до того, как кто-то попадёт в список должников.
   //
-  // Отпуска ищем сразу по обоим спискам людей и по всему окну, а не только по
-  // спрашиваемым дням: детально отслеживаемый может не быть в Tracked users, а
-  // пустые дни в его отчёте всё равно должны объясняться отпуском.
+  // Окно берём целиком, а не только спрашиваемые дни: пустые дни в детальном
+  // отчёте тоже должны объясняться отпуском, а он захватывает и самые свежие дни.
   const vacations = await loadVacations({
     settings,
-    users: mergePeople(users, detailedUsers),
+    users,
     icsUrl: vacationIcsUrl,
     range: { from: window.from, to: today },
   });
@@ -284,20 +284,6 @@ export async function runReminderCheck({ trigger, requestedBy = null, now = new 
     detailedTotals,
     vacations: vacations.report,
   }, schedule);
-}
-
-/**
- * Кто попадает в поиск по календарю отпусков: отслеживаемые плюс детально
- * отслеживаемые, которых нет в первом списке. Запись из Tracked users приоритетнее —
- * только у неё есть «Name in the vacation calendar», и потерять этот override,
- * взяв дубль из другого списка, значило бы перестать узнавать человека в календаре.
- */
-function mergePeople(primary, extra) {
-  const byId = new Map(primary.map((person) => [person.accountId, person]));
-  for (const person of extra ?? []) {
-    if (!byId.has(person.accountId)) byId.set(person.accountId, person);
-  }
-  return [...byId.values()];
 }
 
 /**
@@ -508,16 +494,19 @@ async function sendDetailedReports({
   const issueCache = new Map();
 
   for (const user of detailedUsers) {
-    const recipients = (user.managerIds ?? [])
+    const recipients = (user.detailedManagerIds ?? [])
       .map((accountId) => managersById.get(accountId))
       .filter(Boolean);
+    // В список детальных человек попадает как раз по непустому набору получателей,
+    // так что сюда можно приехать только со ссылкой на менеджера, удалённого между
+    // чтением списков. Молчать об этом всё равно нельзя.
     if (recipients.length === 0) {
       rows.push(
         detailedRow(
           user,
           null,
           OUTCOME.noManager,
-          'Nobody is assigned to receive this report — fill in the Managers column'
+          'Nobody is assigned to receive this report — fill in the “Managers who get the detailed report” column'
         )
       );
       continue;

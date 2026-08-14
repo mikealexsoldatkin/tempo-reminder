@@ -6,30 +6,27 @@ import { testVacationCalendar } from './vacationCalendar.js';
 import { enqueueRun } from './runQueue.js';
 import { describeSchedule } from './reminder.js';
 import {
-  addDetailedUsers,
   addHoliday,
   addManagers,
   addTrackedUsers,
   clearCredential,
   getCredentials,
   getCredentialsStatus,
-  getDetailedUsers,
   getHolidays,
   getLastReport,
   getManagers,
   getRunStatus,
   getSettings,
   getTrackedUsers,
-  removeDetailedUsers,
   removeHolidays,
   removeManagers,
   removeTrackedUsers,
   resetHolidays,
   saveCredential,
   saveSettings,
-  setDetailedUserManagers,
   setManagerEmail,
   setTrackedUserCalendarName,
+  setTrackedUserDetailedManagers,
   setTrackedUserEmail,
   setTrackedUserManagers,
 } from './store.js';
@@ -61,11 +58,10 @@ function define(key, handler) {
 
 /** Полное состояние страницы настроек за один вызов. */
 define('getState', async () => {
-  const [settings, trackedUsers, detailedUsers, managers, credentials, runStatus, lastReport, holidays] =
+  const [settings, trackedUsers, managers, credentials, runStatus, lastReport, holidays] =
     await Promise.all([
       getSettings(),
       getTrackedUsers(),
-      getDetailedUsers(),
       getManagers(),
       getCredentialsStatus(),
       getRunStatus(),
@@ -75,7 +71,6 @@ define('getState', async () => {
   return {
     settings,
     trackedUsers,
-    detailedUsers,
     managers,
     credentials,
     runStatus,
@@ -119,32 +114,26 @@ define('setTrackedUserEmail', async ({ payload }) => ({
   users: await setTrackedUserEmail(payload?.accountId, payload?.email),
 }));
 
+// Два набора получателей у одного сотрудника: дайджест «не отчитался» и разбор
+// worklog'ов по дням. Ручки раздельные — колонки в таблице редактируются независимо.
 define('setTrackedUserManagers', async ({ payload }) => ({
   users: await setTrackedUserManagers(payload?.accountId, payload?.managerIds ?? []),
+}));
+
+define('setTrackedUserDetailedManagers', async ({ payload }) => ({
+  users: await setTrackedUserDetailedManagers(payload?.accountId, payload?.managerIds ?? []),
 }));
 
 define('setTrackedUserCalendarName', async ({ payload }) => ({
   users: await setTrackedUserCalendarName(payload?.accountId, payload?.calendarName),
 }));
 
-/* ------------------ детально отслеживаемые пользователи ------------------ */
-
-define('addDetailedUsers', ({ payload }) => addDetailedUsers(payload?.users ?? []));
-
-define('removeDetailedUsers', async ({ payload }) => ({
-  detailedUsers: await removeDetailedUsers(payload?.accountIds ?? []),
-}));
-
-define('setDetailedUserManagers', async ({ payload }) => ({
-  detailedUsers: await setDetailedUserManagers(payload?.accountId, payload?.managerIds ?? []),
-}));
-
 /* --------------------------------- менеджеры --------------------------------- */
 
 define('addManagers', ({ payload }) => addManagers(payload?.users ?? []));
 
-// Удаление менеджера правит и записи подчинённых в обоих списках людей,
-// поэтому возвращаем все три.
+// Удаление менеджера снимает его и с сотрудников — в обоих наборах получателей,
+// поэтому возвращаем оба обновлённых списка.
 define('removeManagers', ({ payload }) => removeManagers(payload?.accountIds ?? []));
 
 define('setManagerEmail', async ({ payload }) => ({

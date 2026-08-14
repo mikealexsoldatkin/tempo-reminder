@@ -51,7 +51,11 @@ const EmailCell = ({ email, onConfirm }) => (
  * @param {Array} props.people кого показываем
  * @param {(accountIds: string[]) => Promise<void>} props.onRemove
  * @param {(accountId: string, email: string) => Promise<void>} [props.onSetEmail]
- * @param {Array<{key: string, header: string, renderCell: (person: object) => JSX.Element}>} [props.extraColumns]
+ * @param {Array<{key: string, header: string,
+ *   renderCell: (person: object, mutate: (action: () => Promise<void>) => Promise<void>) => JSX.Element}>} [props.extraColumns]
+ *   renderCell получает `mutate` вторым аргументом и обязан заворачивать в него
+ *   свои запросы: иначе ошибка сохранения превращается в необработанный rejection,
+ *   ячейка молча откатывается, и пользователю не сказано ничего.
  * @param {boolean} [props.showContact] показывать ли email и найденный Slack-id.
  *   Выключается там, где сообщение уходит не самому человеку: пустая колонка «Slack»
  *   у того, кому и не пишут, читалась бы как ненайденный аккаунт.
@@ -78,12 +82,17 @@ export const PeopleTable = ({
     });
   };
 
-  const mutate = async (action) => {
+  /**
+   * Выделение сбрасывается только там, где строки исчезают. Правка email или
+   * менеджеров выделение не трогает: отметить десяток человек и потерять отметки
+   * из-за попутной правки одной ячейки — поведение, которого никто не ждёт.
+   */
+  const mutate = async (action, { clearSelection = false } = {}) => {
     setIsBusy(true);
     setError(null);
     try {
       await action();
-      setSelected(new Set());
+      if (clearSelection) setSelected(new Set());
     } catch (e) {
       setError(e.message);
     } finally {
@@ -129,7 +138,7 @@ export const PeopleTable = ({
             },
           ]
         : []),
-      ...extraColumns.map(({ key, renderCell }) => ({ key, content: renderCell(person) })),
+      ...extraColumns.map(({ key, renderCell }) => ({ key, content: renderCell(person, mutate) })),
       ...(showContact
         ? [
             {
@@ -149,7 +158,7 @@ export const PeopleTable = ({
             appearance="subtle"
             iconBefore="trash"
             isDisabled={isBusy}
-            onClick={() => mutate(() => onRemove([person.accountId]))}
+            onClick={() => mutate(() => onRemove([person.accountId]), { clearSelection: true })}
           >
             Remove
           </Button>
@@ -186,7 +195,7 @@ export const PeopleTable = ({
             appearance="danger"
             isLoading={isBusy}
             isDisabled={selected.size === 0}
-            onClick={() => mutate(() => onRemove([...selected]))}
+            onClick={() => mutate(() => onRemove([...selected]), { clearSelection: true })}
           >
             Remove selected ({selected.size})
           </LoadingButton>
