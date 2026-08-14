@@ -11,9 +11,6 @@ modules:
         function: resolver
       title: Tempo Reminders
   scheduledTrigger:
-    # Час — самая мелкая практичная гранулярность триггера. Конкретные времена
-    # рассылки задаются в настройках приложения (settings.runTimes), а функция
-    # на каждом срабатывании сверяется с ними; см. evaluateSchedule в reminder.js.
     - key: tempo-reminder-hourly
       function: scheduled
       interval: hour  # options: fiveMinute | hour | day | week
@@ -36,8 +33,6 @@ permissions:
     - read:jira-user
     - read:jira-work
     - storage:app
-    # Email API: приложению видны только профильные поля с видимостью «Anyone»,
-    # а email обычно ограничен организацией. Без этого scope адреса не прочитать.
     - read:email-address:jira
   external:
     fetch:
