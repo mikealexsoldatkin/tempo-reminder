@@ -24,8 +24,10 @@ const OUTCOME_VIEW = {
   reminded: { appearance: 'inprogress', label: 'reminder sent' },
   logged: { appearance: 'success', label: 'time logged' },
   notified: { appearance: 'inprogress', label: 'digest sent' },
+  reported: { appearance: 'inprogress', label: 'report sent' },
   'all-clear': { appearance: 'success', label: 'all clear sent' },
   'on-leave': { appearance: 'moved', label: 'on leave' },
+  'no-manager': { appearance: 'removed', label: 'no manager' },
   'no-email': { appearance: 'removed', label: 'no email' },
   'no-slack': { appearance: 'removed', label: 'not in Slack' },
   error: { appearance: 'removed', label: 'error' },
@@ -43,13 +45,22 @@ const POLL_INTERVAL_MS = 3000;
  * Ручной запуск проверки в обход scheduledTrigger + отчёт последнего прогона.
  * Сама проверка идёт в очереди, поэтому статус подтягиваем поллингом.
  */
-export const RunTab = ({ runStatus, lastReport, trackedCount, credentials, onRunStateChange }) => {
+export const RunTab = ({
+  runStatus,
+  lastReport,
+  trackedCount,
+  detailedCount = 0,
+  credentials,
+  onRunStateChange,
+}) => {
   const [isStarting, setIsStarting] = useState(false);
   const [isConfirmOpen, setIsConfirmOpen] = useState(false);
   const [message, setMessage] = useState(null);
 
   const isRunning = runStatus?.state === 'queued' || runStatus?.state === 'running';
   const tokensMissing = !credentials.tempoToken?.isSet || !credentials.slackBotToken?.isSet;
+  // Списки независимы: непустого хватит любого — прогон сделает то, для чего есть люди.
+  const nobodyToCheck = trackedCount === 0 && detailedCount === 0;
 
   const refresh = useCallback(async () => {
     try {
@@ -97,9 +108,9 @@ export const RunTab = ({ runStatus, lastReport, trackedCount, credentials, onRun
           </SectionMessage>
         )}
 
-        {trackedCount === 0 && (
+        {nobodyToCheck && (
           <SectionMessage appearance="warning">
-            <Text>The tracked users list is empty — there is nobody to check.</Text>
+            <Text>Both people lists are empty — there is nobody to check.</Text>
           </SectionMessage>
         )}
 
@@ -107,7 +118,7 @@ export const RunTab = ({ runStatus, lastReport, trackedCount, credentials, onRun
           <LoadingButton
             appearance="primary"
             isLoading={isStarting}
-            isDisabled={isRunning || tokensMissing || trackedCount === 0}
+            isDisabled={isRunning || tokensMissing || nobodyToCheck}
             onClick={() => setIsConfirmOpen(true)}
           >
             Start check
@@ -147,8 +158,9 @@ export const RunTab = ({ runStatus, lastReport, trackedCount, credentials, onRun
               <Text>
                 Real Slack messages will be sent to every tracked user (currently {trackedCount})
                 who has no Tempo entries within the check window, and to every manager on the list —
-                either a digest, or the “everyone has logged time” note. A manual run ignores both
-                schedules and sends everything.
+                either a digest, or the “everyone has logged time” note. Managers also get a
+                detailed report for each of the {detailedCount} people tracked in detail. A manual
+                run ignores both schedules, the weekday-only rule and sends everything.
               </Text>
             </ModalBody>
             <ModalFooter>
@@ -240,6 +252,7 @@ const LastReport = ({ report }) => {
       )}
 
       <ManagerDigests report={report} />
+      <DetailedReports report={report} />
     </Stack>
   );
 };
@@ -291,6 +304,62 @@ const ManagerDigests = ({ report }) => {
       )}
       {report.truncatedManagerRows > 0 && (
         <Text>Not all rows are shown: {report.truncatedManagerRows} more hidden.</Text>
+      )}
+      {rows.length > 0 && (
+        <Box>
+          <DynamicTable head={head} rows={rows} rowsPerPage={20} />
+        </Box>
+      )}
+    </Stack>
+  );
+};
+
+/**
+ * Детальные отчёты: строка на пару «сотрудник — получатель», потому что и сообщение,
+ * и его доставка у каждого получателя свои.
+ */
+const DetailedReports = ({ report }) => {
+  const totals = report.detailedTotals;
+  const detailedRows = report.detailedRows ?? [];
+  if (!totals || (detailedRows.length === 0 && !totals.people)) return null;
+
+  const head = {
+    cells: [
+      { key: 'name', content: 'Person' },
+      { key: 'manager', content: 'Sent to' },
+      { key: 'outcome', content: 'Outcome' },
+      { key: 'detail', content: 'Details' },
+    ],
+  };
+  const rows = detailedRows.map((row) => {
+    const view = OUTCOME_VIEW[row.outcome] ?? { appearance: 'default', label: row.outcome };
+    return {
+      key: row.key ?? row.accountId,
+      cells: [
+        { key: 'name', content: <Text>{row.displayName}</Text> },
+        { key: 'manager', content: <Text>{row.managerName ?? '—'}</Text> },
+        { key: 'outcome', content: <Lozenge appearance={view.appearance}>{view.label}</Lozenge> },
+        { key: 'detail', content: <Text>{row.detail}</Text> },
+      ],
+    };
+  });
+
+  return (
+    <Stack space="space.100">
+      <Heading as="h4" size="small">Detailed reports</Heading>
+      <Text>
+        Tracked in detail: {totals.people}, reports sent: {totals.sent}, errors: {totals.failed}
+      </Text>
+      {totals.withoutManager > 0 && (
+        <SectionMessage appearance="warning">
+          <Text>
+            {totals.withoutManager} of them have no manager assigned — their reports went nowhere.
+            Fill in the Managers column in the Detailed tracking users table.
+          </Text>
+        </SectionMessage>
+      )}
+      {report.truncatedDetailedRows > 0 && (
+        <Text>Not all rows are shown: {report.truncatedDetailedRows} more hidden.</Text>
       )}
       {rows.length > 0 && (
         <Box>

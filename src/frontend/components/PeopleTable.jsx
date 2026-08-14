@@ -44,14 +44,17 @@ const EmailCell = ({ email, onConfirm }) => (
  * он нужен для поиска человека в Slack, а Jira отдаёт его только если профиль
  * не скрыт настройками приватности.
  *
- * Один и тот же компонент обслуживает и отслеживаемых сотрудников, и менеджеров:
- * различаются они только дополнительной колонкой и вызываемыми ручками API.
+ * Один и тот же компонент обслуживает все три списка людей: различаются они только
+ * дополнительными колонками и вызываемыми ручками API.
  *
  * @param {object} props
  * @param {Array} props.people кого показываем
  * @param {(accountIds: string[]) => Promise<void>} props.onRemove
- * @param {(accountId: string, email: string) => Promise<void>} props.onSetEmail
+ * @param {(accountId: string, email: string) => Promise<void>} [props.onSetEmail]
  * @param {Array<{key: string, header: string, renderCell: (person: object) => JSX.Element}>} [props.extraColumns]
+ * @param {boolean} [props.showContact] показывать ли email и найденный Slack-id.
+ *   Выключается там, где сообщение уходит не самому человеку: пустая колонка «Slack»
+ *   у того, кому и не пишут, читалась бы как ненайденный аккаунт.
  */
 export const PeopleTable = ({
   title,
@@ -60,6 +63,7 @@ export const PeopleTable = ({
   onRemove,
   onSetEmail,
   extraColumns = [],
+  showContact = true,
 }) => {
   const [selected, setSelected] = useState(new Set());
   const [isBusy, setIsBusy] = useState(false);
@@ -91,9 +95,9 @@ export const PeopleTable = ({
     cells: [
       { key: 'select', content: '', width: 5 },
       { key: 'name', content: 'Name' },
-      { key: 'email', content: 'Email for Slack lookup' },
+      ...(showContact ? [{ key: 'email', content: 'Email for Slack lookup' }] : []),
       ...extraColumns.map(({ key, header }) => ({ key, content: header })),
-      { key: 'slack', content: 'Slack' },
+      ...(showContact ? [{ key: 'slack', content: 'Slack' }] : []),
       { key: 'actions', content: '', width: 10 },
     ],
   };
@@ -112,24 +116,32 @@ export const PeopleTable = ({
         ),
       },
       { key: 'name', content: <Text>{person.displayName}</Text> },
-      {
-        key: 'email',
-        content: (
-          <EmailCell
-            email={person.email}
-            onConfirm={(value) => mutate(() => onSetEmail(person.accountId, value))}
-          />
-        ),
-      },
+      ...(showContact
+        ? [
+            {
+              key: 'email',
+              content: (
+                <EmailCell
+                  email={person.email}
+                  onConfirm={(value) => mutate(() => onSetEmail(person.accountId, value))}
+                />
+              ),
+            },
+          ]
+        : []),
       ...extraColumns.map(({ key, renderCell }) => ({ key, content: renderCell(person) })),
-      {
-        key: 'slack',
-        content: (
-          <Lozenge appearance={person.slackUserId ? 'success' : 'default'}>
-            {person.slackUserId ? 'found' : '—'}
-          </Lozenge>
-        ),
-      },
+      ...(showContact
+        ? [
+            {
+              key: 'slack',
+              content: (
+                <Lozenge appearance={person.slackUserId ? 'success' : 'default'}>
+                  {person.slackUserId ? 'found' : '—'}
+                </Lozenge>
+              ),
+            },
+          ]
+        : []),
       {
         key: 'actions',
         content: (

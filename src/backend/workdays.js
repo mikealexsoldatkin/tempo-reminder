@@ -75,3 +75,23 @@ export function daysToReport(days, acceptableDelayDays) {
 export function windowOf(days) {
   return { from: days[0], to: days[days.length - 1] };
 }
+
+/**
+ * Все календарные дни отрезка [from..to], включая обе границы.
+ *
+ * В отличие от lastWorkingDays выходные и праздники не выбрасываются: детальный
+ * отчёт показывает окно сплошняком и подписывает под каждым пустым днём причину,
+ * а «за субботу записей нет» — это тоже ответ.
+ */
+export function eachDay(from, to) {
+  if (!from || !to || from > to) return [];
+
+  const days = [];
+  for (let day = from; day <= to; day = addDays(day, 1)) {
+    if (days.length > MAX_DAYS_TO_WALK_BACK) {
+      throw new Error(`The range ${from}..${to} is too long for a day-by-day report`);
+    }
+    days.push(day);
+  }
+  return days;
+}

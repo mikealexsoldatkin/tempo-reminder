@@ -9,11 +9,21 @@ import { api } from '../api.js';
  * Каждое действие возвращает текст об успехе: формулировки у списков разные,
  * а сам хук поиска про их смысл ничего не знает.
  */
-export const candidateActions = ({ onUsersChange, onManagersChange }) => ({
+export const candidateActions = ({ onUsersChange, onDetailedUsersChange, onManagersChange }) => ({
   track: async (chosen) => {
     const result = await api.addTrackedUsers(chosen);
     onUsersChange(result.users);
     return `Now tracked: ${result.added}${result.skipped > 0 ? `, already tracked: ${result.skipped}` : ''}`;
+  },
+
+  detailed: async (chosen) => {
+    const result = await api.addDetailedUsers(chosen);
+    onDetailedUsersChange(result.detailedUsers);
+    return (
+      `Now tracked in detail: ${result.added}` +
+      `${result.skipped > 0 ? `, already there: ${result.skipped}` : ''}` +
+      '. Pick who receives their reports in the Detailed tracking users table.'
+    );
   },
 
   manager: async (chosen) => {

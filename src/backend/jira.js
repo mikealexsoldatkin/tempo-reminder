@@ -252,6 +252,50 @@ function collect(byAccountId, roleName, person) {
   });
 }
 
+// Жёсткий лимит /issue/bulkfetch — 100 задач на запрос.
+const ISSUE_CHUNK = 100;
+
+/**
+ * Ключ и заголовок задач по их числовым id.
+ *
+ * Нужны детальному отчёту: Tempo кладёт в worklog только `issue.id`, а менеджеру
+ * в сообщении нужен человеческий ключ вида ABC-123. Заголовок берём заодно — он
+ * подставляется вместо описания там, где человек залогировал время молча.
+ *
+ * Недоступная задача (удалена, нет прав) не должна ронять отчёт целиком: такие id
+ * просто не попадают в результат, и в сообщении вместо ключа останется id.
+ *
+ * @param {Array<string|number>} issueIds
+ * @returns {Promise<Map<string, {key: string, summary: string|null}>>}
+ */
+export async function getIssues(issueIds) {
+  const ids = [...new Set((issueIds ?? []).filter((id) => id !== null && id !== undefined).map(String))];
+  const found = new Map();
+
+  for (let i = 0; i < ids.length; i += ISSUE_CHUNK) {
+    const chunk = ids.slice(i, i + ISSUE_CHUNK);
+    try {
+      const res = await api.asApp().requestJira(route`/rest/api/3/issue/bulkfetch`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ issueIdsOrKeys: chunk, fields: ['summary'] }),
+      });
+      if (!res.ok) throw new Error(await jiraError(res, 'bulk issue fetch'));
+
+      for (const issue of (await res.json())?.issues ?? []) {
+        if (!issue?.id || !issue?.key) continue;
+        found.set(String(issue.id), {
+          key: issue.key,
+          summary: issue.fields?.summary ? String(issue.fields.summary) : null,
+        });
+      }
+    } catch (e) {
+      console.warn(`Ключи задач не получены (${chunk.length} шт.): ${e.message}`);
+    }
+  }
+  return found;
+}
+
 /**
  * Проверяет, что вызывающий — администратор Jira.
  * adminPage прячет UI от обычных пользователей, но резолверы доступны любому

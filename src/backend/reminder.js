@@ -2,6 +2,7 @@ import {
   cacheManagerSlackUserIds,
   cacheSlackUserIds,
   getCredentials,
+  getDetailedUsers,
   getHandledRunTimes,
   getHolidays,
   getManagers,
@@ -11,7 +12,8 @@ import {
   saveLastReport,
   setRunStatus,
 } from './store.js';
-import { getWorklogDaysByAuthor, sleep } from './tempo.js';
+import { getUserWorklogs, getWorklogDaysByAuthor, sleep } from './tempo.js';
+import { getIssues } from './jira.js';
 import { lookupSlackUserByEmail, sendSlackDm } from './slack.js';
 import { daysToReport, isWeekend, lastWorkingDays, windowOf } from './workdays.js';
 import {
@@ -29,10 +31,12 @@ import {
   countManagedPeople,
   countWithoutManager,
   groupByManager,
+  renderDetailedReportMessage,
   renderManagerAllClearMessage,
   renderManagerMessage,
   renderUserMessage,
 } from './notifications.js';
+import { buildDailyReport, formatDailyReport } from './dailyReport.js';
 
 export const OUTCOME = {
   reminded: 'reminded',
@@ -40,6 +44,8 @@ export const OUTCOME = {
   notified: 'notified',
   allClear: 'all-clear',
   onLeave: 'on-leave',
+  reported: 'reported',
+  noManager: 'no-manager',
   noEmail: 'no-email',
   noSlack: 'no-slack',
   error: 'error',
@@ -47,19 +53,24 @@ export const OUTCOME = {
 
 /**
  * Две независимые рассылки с раздельными расписаниями: напоминания самим
- * сотрудникам и дайджесты их менеджерам.
+ * сотрудникам и дайджесты их менеджерам. Детальные отчёты своего расписания не
+ * имеют — они уходят вместе с менеджерскими и отдельным видом слота не считаются.
  */
 export const RUN_KIND = { users: 'users', managers: 'managers' };
 
 // Паузы, чтобы не упереться в rate limit Slack (lookupByEmail — Tier 3, postMessage — ~1 msg/s).
 const SLACK_LOOKUP_PAUSE_MS = 200;
 const SLACK_SEND_PAUSE_MS = 300;
+// Детальные отчёты идут по запросу на человека — шлюз Tempo режет на ~5 req/s.
+const TEMPO_USER_PAUSE_MS = 250;
 
 /**
  * Один прогон проверки: кто из отслеживаемых пользователей не репортился в Tempo
  * за последние N рабочих дней. Такому человеку уходит DM, а его менеджерам —
- * дайджест со списком подчинённых. Что именно рассылать, решает расписание;
- * ручной запуск делает и то, и другое.
+ * дайджест со списком подчинённых. Вместе с дайджестами уходят детальные отчёты
+ * по тем, за кем следят глубоко (Detailed tracking users): по одному сообщению на
+ * человека, с разбором окна по дням. Что именно рассылать, решает расписание;
+ * ручной запуск делает всё сразу.
  *
  * @param {{ trigger: 'schedule'|'manual', requestedBy?: string|null, now?: Date }} options
  */
@@ -77,14 +88,17 @@ export async function runReminderCheck({ trigger, requestedBy = null, now = new 
     return finish({ trigger, requestedBy, startedAt, status: 'skipped', message: schedule.reason });
   }
 
+  const today = schedule?.date ?? dayParts(now).date;
+  // Детальные отчёты отдельного расписания не имеют — они уходят вместе с дайджестами
+  // менеджерам. Но только по будням: разбор рабочей недели, пришедший в субботу,
+  // менеджеру не нужен, а к понедельнику он всё равно повторится.
   const targets = schedule
     ? {
         users: schedule.due[RUN_KIND.users].length > 0,
         managers: schedule.due[RUN_KIND.managers].length > 0,
+        detailed: schedule.due[RUN_KIND.managers].length > 0 && !isWeekend(today),
       }
-    : { users: true, managers: true };
-
-  const today = schedule?.date ?? dayParts(now).date;
+    : { users: true, managers: true, detailed: true };
   // Проверяем каждый рабочий день окна по отдельности, но за самые свежие дни
   // время ещё могут не успеть занести — их прощает «acceptable delay».
   let checkedDays;
@@ -108,15 +122,17 @@ export async function runReminderCheck({ trigger, requestedBy = null, now = new 
     }, schedule);
   }
 
-  const users = await getTrackedUsers();
-  if (users.length === 0) {
+  const [users, detailedUsers] = await Promise.all([getTrackedUsers(), getDetailedUsers()]);
+  // Списки независимы: один может быть заполнен без другого, и прогон осмыслен,
+  // пока непуст хотя бы один из них.
+  if (users.length === 0 && detailedUsers.length === 0) {
     return finish({
       trigger,
       requestedBy,
       startedAt,
       window,
       status: 'skipped',
-      message: 'The tracked users list is empty — add users in the app settings',
+      message: 'Both people lists are empty — add users in the app settings',
     }, schedule);
   }
 
@@ -140,27 +156,40 @@ export async function runReminderCheck({ trigger, requestedBy = null, now = new 
     `Прогон (${trigger}${schedule ? `, слоты ${describeDue(schedule.due)}` : ''}): ` +
       `окно ${window.from}..${window.to} (${checkedDays.length} раб. дн.), ` +
       `спрашиваем ${requiredDays.length}: ${requiredDays.join(', ')}; ` +
-      `отслеживается ${users.length} чел., ` +
-      `рассылка: ${[targets.users && 'сотрудникам', targets.managers && 'менеджерам'].filter(Boolean).join(' и ') || '—'}`
+      `отслеживается ${users.length} чел., детально ${detailedUsers.length}, ` +
+      `рассылка: ${
+        [
+          targets.users && 'сотрудникам',
+          targets.managers && 'менеджерам',
+          targets.detailed && 'детальные отчёты',
+        ]
+          .filter(Boolean)
+          .join(', ') || '—'
+      }`
   );
 
   // Тянем из Tempo только спрашиваемые дни: за прощённые записи всё равно не
   // проверяются, а лишние страницы — это лишние запросы к шлюзу с rate limit'ом.
+  // Пустой список отслеживаемых пропускает запрос целиком: он прокачивает через
+  // себя worklog'и всего инстанса, а сверять их будет не с кем. Детальные отчёты
+  // от него не зависят — они ходят за записями конкретного человека.
   const fetchRange = windowOf(requiredDays);
-  let daysByAuthor;
-  try {
-    daysByAuthor = await getWorklogDaysByAuthor(fetchRange.from, fetchRange.to, tempoToken);
-  } catch (e) {
-    return finish({
-      trigger,
-      requestedBy,
-      startedAt,
-      window,
-      status: 'failed',
-      message: `Couldn’t fetch worklogs from Tempo: ${e.message}`,
-    }, schedule);
+  let daysByAuthor = new Map();
+  if (users.length > 0) {
+    try {
+      daysByAuthor = await getWorklogDaysByAuthor(fetchRange.from, fetchRange.to, tempoToken);
+    } catch (e) {
+      return finish({
+        trigger,
+        requestedBy,
+        startedAt,
+        window,
+        status: 'failed',
+        message: `Couldn’t fetch worklogs from Tempo: ${e.message}`,
+      }, schedule);
+    }
+    console.log(`Tempo: ${daysByAuthor.size} авторов с записями в окне`);
   }
-  console.log(`Tempo: ${daysByAuthor.size} авторов с записями в окне`);
 
   // Дни без записей у каждого отслеживаемого — считаем один раз: они нужны и для
   // самих напоминаний, и для списка в дайджесте менеджеру, и для отчёта.
@@ -174,11 +203,15 @@ export async function runReminderCheck({ trigger, requestedBy = null, now = new 
   // Отпускной день — не долг: за него не спрашивают ни сотрудника, ни менеджера.
   // Календарь читается до отправки, чтобы такие дни исчезли из пропущенных ещё
   // до того, как кто-то попадёт в список должников.
+  //
+  // Отпуска ищем сразу по обоим спискам людей и по всему окну, а не только по
+  // спрашиваемым дням: детально отслеживаемый может не быть в Tracked users, а
+  // пустые дни в его отчёте всё равно должны объясняться отпуском.
   const vacations = await loadVacations({
     settings,
-    users,
+    users: mergePeople(users, detailedUsers),
     icsUrl: vacationIcsUrl,
-    range: { from: requiredDays[0], to: today },
+    range: { from: window.from, to: today },
   });
   const { missingDaysByUser, excusedDaysByUser } = excludeVacationDays(
     missingBeforeVacations,
@@ -209,14 +242,30 @@ export async function runReminderCheck({ trigger, requestedBy = null, now = new 
         slackBotToken,
       })
     : [];
+  const detailedRows = targets.detailed
+    ? await sendDetailedReports({
+        detailedUsers,
+        vacationDaysByPerson: vacations.daysByPerson,
+        window,
+        settings,
+        isHoliday,
+        tempoToken,
+        slackBotToken,
+      })
+    : [];
 
   const totals = countUserOutcomes(rows);
   // Если дайджесты в этот прогон не рассылались, счётчик «без менеджера» тоже
   // не считаем: иначе отчёт о рассылке сотрудникам предупреждал бы о менеджерах.
   const managerTotals = countManagerOutcomes(managerRows, targets.managers ? unreported : []);
+  const detailedTotals = countDetailedOutcomes(
+    detailedRows,
+    targets.detailed ? detailedUsers.length : 0
+  );
   console.log(
     `Готово. Напоминаний: ${totals.reminded}, дайджестов: ${managerTotals.notified}, ` +
-      `«всё в порядке»: ${managerTotals.allClear}, ошибок: ${totals.failed + managerTotals.failed}`
+      `«всё в порядке»: ${managerTotals.allClear}, детальных отчётов: ${detailedTotals.sent}, ` +
+      `ошибок: ${totals.failed + managerTotals.failed + detailedTotals.failed}`
   );
 
   return finish({
@@ -226,13 +275,29 @@ export async function runReminderCheck({ trigger, requestedBy = null, now = new 
     window,
     requiredDays,
     status: 'ok',
-    message: summarize(targets, totals, managerTotals, unreported.length),
+    message: summarize(targets, totals, managerTotals, detailedTotals, unreported.length),
     rows,
     totals,
     managerRows,
     managerTotals,
+    detailedRows,
+    detailedTotals,
     vacations: vacations.report,
   }, schedule);
+}
+
+/**
+ * Кто попадает в поиск по календарю отпусков: отслеживаемые плюс детально
+ * отслеживаемые, которых нет в первом списке. Запись из Tracked users приоритетнее —
+ * только у неё есть «Name in the vacation calendar», и потерять этот override,
+ * взяв дубль из другого списка, значило бы перестать узнавать человека в календаре.
+ */
+function mergePeople(primary, extra) {
+  const byId = new Map(primary.map((person) => [person.accountId, person]));
+  for (const person of extra ?? []) {
+    if (!byId.has(person.accountId)) byId.set(person.accountId, person);
+  }
+  return [...byId.values()];
 }
 
 /**
@@ -416,6 +481,123 @@ async function notifyManagers({
 }
 
 /**
+ * Детальные отчёты: по одному сообщению на пару «сотрудник — его менеджер».
+ *
+ * Здесь не проверка, а разбор: за каждый день окна в сообщение уходит список задач
+ * с типом работы и описанием. Окно берётся целиком, без скидки на acceptable delay —
+ * менеджер, который смотрит человека глубоко, хочет видеть и сегодняшний день.
+ *
+ * Одно сообщение — один сотрудник: сшивать нескольких в письмо значило бы отправить
+ * менеджеру простыню, в которой ничего не найти.
+ */
+async function sendDetailedReports({
+  detailedUsers,
+  vacationDaysByPerson,
+  window,
+  settings,
+  isHoliday,
+  tempoToken,
+  slackBotToken,
+}) {
+  if (detailedUsers.length === 0) return [];
+
+  const managersById = new Map((await getManagers()).map((manager) => [manager.accountId, manager]));
+  const rows = [];
+  const slackIdsToCache = {};
+  // Разные люди списывают время в одни и те же задачи — ключи добираем один раз на прогон.
+  const issueCache = new Map();
+
+  for (const user of detailedUsers) {
+    const recipients = (user.managerIds ?? [])
+      .map((accountId) => managersById.get(accountId))
+      .filter(Boolean);
+    if (recipients.length === 0) {
+      rows.push(
+        detailedRow(
+          user,
+          null,
+          OUTCOME.noManager,
+          'Nobody is assigned to receive this report — fill in the Managers column'
+        )
+      );
+      continue;
+    }
+
+    let entries;
+    try {
+      entries = await getUserWorklogs(user.accountId, window.from, window.to, tempoToken);
+      await resolveIssues(entries, issueCache);
+      await sleep(TEMPO_USER_PAUSE_MS);
+    } catch (e) {
+      console.error(`Детальный отчёт по ${user.accountId} не собран: ${e.message}`);
+      rows.push(detailedRow(user, null, OUTCOME.error, `Couldn’t read the worklogs: ${e.message}`));
+      continue;
+    }
+
+    const days = buildDailyReport({
+      window,
+      worklogs: entries,
+      isHoliday,
+      vacationDays: vacationDaysByPerson.get(user.accountId) ?? null,
+    });
+    const report = formatDailyReport(days);
+    const daysWithEntries = days.filter((day) => day.entries.length > 0).length;
+
+    for (const manager of recipients) {
+      const text = renderDetailedReportMessage(settings.detailedReportTemplate, {
+        manager,
+        user,
+        report,
+        window,
+        lookbackWorkingDays: settings.lookbackWorkingDays,
+      });
+      const sent = await dm(manager, text, slackBotToken, slackIdsToCache);
+      rows.push(
+        detailedRow(
+          user,
+          manager,
+          sent.outcome === OUTCOME.reminded ? OUTCOME.reported : sent.outcome,
+          sent.outcome === OUTCOME.reminded
+            ? `Report sent: ${entries.length} entries on ${daysWithEntries} of ${days.length} days`
+            : sent.detail
+        )
+      );
+    }
+  }
+
+  // Получатели здесь — менеджеры, их найденные Slack-id кэшируются в своём списке.
+  await cacheManagerSlackUserIds(slackIdsToCache);
+  return rows;
+}
+
+/**
+ * Проставляет записям ключ задачи и её заголовок: Tempo знает только числовой id.
+ *
+ * Недобранная задача отчёт не ломает — в сообщении вместо ключа останется id,
+ * поэтому getIssues не бросает исключений, а логирует и отдаёт что нашлось.
+ */
+async function resolveIssues(entries, cache) {
+  const unknown = [
+    ...new Set(
+      entries
+        .filter((entry) => !entry.issueKey && entry.issueId !== null)
+        .map((entry) => String(entry.issueId))
+        .filter((id) => !cache.has(id))
+    ),
+  ];
+  if (unknown.length > 0) {
+    const found = await getIssues(unknown);
+    for (const id of unknown) cache.set(id, found.get(id) ?? null);
+  }
+
+  for (const entry of entries) {
+    const issue = entry.issueId === null ? null : cache.get(String(entry.issueId));
+    entry.issueKey = entry.issueKey ?? issue?.key ?? null;
+    entry.issueSummary = issue?.summary ?? null;
+  }
+}
+
+/**
  * Что именно ушло менеджеру — строкой для отчёта. Менеджер без единого закреплённого
  * сотрудника тоже получает «всё в порядке», и это стоит отметить: скорее всего его
  * просто забыли проставить кому-то в колонке Managers.
@@ -583,6 +765,22 @@ function managerRow(manager, reportedCount, outcome, detail) {
   return { ...row(manager, outcome, detail), reportedCount };
 }
 
+/**
+ * Строка детального отчёта — про пару «сотрудник и его менеджер»: сообщение уходит
+ * каждому получателю отдельно, и доставка у них тоже своя. Поэтому отдельный ключ:
+ * accountId сотрудника в такой таблице повторяется.
+ */
+function detailedRow(user, manager, outcome, detail) {
+  return {
+    key: manager ? `${user.accountId}:${manager.accountId}` : user.accountId,
+    accountId: user.accountId,
+    displayName: user.displayName,
+    managerName: manager?.displayName ?? null,
+    outcome,
+    detail,
+  };
+}
+
 function countUserOutcomes(rows) {
   const totals = { tracked: rows.length, logged: 0, reminded: 0, onLeave: 0, skipped: 0, failed: 0 };
   for (const { outcome } of rows) {
@@ -615,7 +813,19 @@ function countManagerOutcomes(rows, unreported) {
   return totals;
 }
 
-function summarize(targets, totals, managerTotals, unreportedCount) {
+function countDetailedOutcomes(rows, peopleCount) {
+  const totals = { people: peopleCount, sent: 0, failed: 0, skipped: 0, withoutManager: 0 };
+  for (const { outcome } of rows) {
+    if (outcome === OUTCOME.reported) totals.sent++;
+    else if (outcome === OUTCOME.error) totals.failed++;
+    // Человек в списке, но получателя у отчёта нет — молча это терять нельзя.
+    else if (outcome === OUTCOME.noManager) totals.withoutManager++;
+    else totals.skipped++;
+  }
+  return totals;
+}
+
+function summarize(targets, totals, managerTotals, detailedTotals, unreportedCount) {
   const parts = [`${unreportedCount} of the tracked people are missing at least one checked day`];
   if (targets.users) parts.push(`reminders sent: ${totals.reminded}`);
   if (targets.users && totals.onLeave > 0) parts.push(`on leave: ${totals.onLeave}`);
@@ -624,7 +834,10 @@ function summarize(targets, totals, managerTotals, unreportedCount) {
       `manager digests sent: ${managerTotals.notified}, all-clear notes: ${managerTotals.allClear}`
     );
   }
-  if (!targets.users && !targets.managers) parts.push('nothing was sent');
+  if (targets.detailed && detailedTotals.people > 0) {
+    parts.push(`detailed reports sent: ${detailedTotals.sent}`);
+  }
+  if (!targets.users && !targets.managers && !targets.detailed) parts.push('nothing was sent');
   return parts.join(', ');
 }
 
@@ -634,6 +847,8 @@ async function finish(report, schedule = null) {
     totals: { tracked: 0, logged: 0, reminded: 0, onLeave: 0, skipped: 0, failed: 0 },
     managerRows: [],
     managerTotals: { managers: 0, notified: 0, allClear: 0, failed: 0, skipped: 0, withoutManager: 0 },
+    detailedRows: [],
+    detailedTotals: { people: 0, sent: 0, failed: 0, skipped: 0, withoutManager: 0 },
     // Что вышло с календарём отпусков: включён ли он, прочитался ли и что мешало.
     vacations: { enabled: false, used: false, warning: null },
     window: null,

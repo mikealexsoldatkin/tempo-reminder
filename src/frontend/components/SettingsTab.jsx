@@ -16,7 +16,7 @@ import {
 import { api } from '../api';
 
 // TextArea тянется на всю ширину родителя и своей ширины не имеет, поэтому размер
-// трём шаблонам задаёт обёртка, а не сами поля. width: '100%' + flexGrow внутри Inline
+// шаблонам задаёт обёртка, а не сами поля. width: '100%' + flexGrow внутри Inline
 // означает «занять всё, что есть»: колонки равномерно ужимаются от полной ширины
 // страницы и остаются одинаковыми, каких бы размеров ни было окно.
 const templateFieldStyles = xcss({ width: '100%', flexGrow: 1 });
@@ -76,6 +76,7 @@ export const SettingsTab = ({ settings, schedule, onSettingsChange }) => {
         messageTemplate: form.messageTemplate,
         managerMessageTemplate: form.managerMessageTemplate,
         managerAllClearTemplate: form.managerAllClearTemplate,
+        detailedReportTemplate: form.detailedReportTemplate,
       });
       setForm(toForm(result.settings));
       setScheduleInfo(result.schedule ?? null);
@@ -161,7 +162,9 @@ export const SettingsTab = ({ settings, schedule, onSettingsChange }) => {
               onChange={(e) => setForm((prev) => ({ ...prev, managerRunTimes: e.target.value }))}
             />
             <HelperMessage>
-              Digests and all-clear notes to managers. Independent of the schedule on the left.
+              Digests, all-clear notes and the detailed reports — all to managers, independent of
+              the schedule on the left. Detailed reports also skip weekends, whatever the
+              “Holidays” tab says.
             </HelperMessage>
           </Stack>
         </Box>
@@ -219,6 +222,25 @@ export const SettingsTab = ({ settings, schedule, onSettingsChange }) => {
               manager’s own name — {'{from}'}, {'{to}'}, {'{days}'}, {'{count}'} — how many of
               their people are missing time — and {'{list}'} — those people, one per line, each
               with the days they’re missing.
+            </HelperMessage>
+          </Stack>
+        </Box>
+        <Box xcss={templateFieldStyles}>
+          <Stack space="space.050">
+            <Label labelFor="detailed-template">Detailed report text</Label>
+            <TextArea
+              id="detailed-template"
+              value={form.detailedReportTemplate}
+              onChange={(e) =>
+                setForm((prev) => ({ ...prev, detailedReportTemplate: e.target.value }))
+              }
+            />
+            <HelperMessage>
+              One message per person from “Detailed tracking users”, sent to each of their
+              managers on the schedule above — on weekdays only. Placeholders: {'{name}'} — the
+              manager’s own name — {'{user}'} — whose report it is — {'{from}'}, {'{to}'},{' '}
+              {'{days}'} and {'{report}'} — the day-by-day breakdown, one date per line with the
+              hours logged, the issue key, the Tempo work attribute and the worklog description.
             </HelperMessage>
           </Stack>
         </Box>

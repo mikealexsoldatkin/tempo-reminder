@@ -4,6 +4,7 @@ import {
   countManagedPeople,
   countWithoutManager,
   groupByManager,
+  renderDetailedReportMessage,
   renderManagerAllClearMessage,
   renderManagerMessage,
   renderUserMessage,
@@ -103,6 +104,32 @@ test('{list} в сообщении «все отчитались» остаёт�
     lookbackWorkingDays: 2,
   });
   assert.equal(text, 'Maria: {list}');
+});
+
+test('в детальном отчёте {name} — получатель, а {user} — тот, о ком отчёт', () => {
+  const text = renderDetailedReportMessage('{name}, this is {user} for {from}—{to}:\n{report}', {
+    manager: managers[0],
+    user: anna,
+    report: '2026-08-12:\n- ABC-1: [Development] Work',
+    window,
+    lookbackWorkingDays: 3,
+  });
+  assert.equal(
+    text,
+    'Maria, this is Anna Ivanova for 2026-08-12—2026-08-14:\n2026-08-12:\n- ABC-1: [Development] Work'
+  );
+});
+
+test('плейсхолдер, пришедший из отчёта, повторно не подставляется', () => {
+  // В описании worklog'а вполне может оказаться «{days}» — числом оно стать не должно.
+  const text = renderDetailedReportMessage('{report} / {days}', {
+    manager: managers[0],
+    user: anna,
+    report: '- ABC-1: {days} left',
+    window,
+    lookbackWorkingDays: 5,
+  });
+  assert.equal(text, '- ABC-1: {days} left / 5');
 });
 
 test('плейсхолдер, пришедший из данных, повторно не подставляется', () => {

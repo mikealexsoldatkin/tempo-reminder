@@ -111,12 +111,39 @@ export function renderManagerAllClearMessage(
 }
 
 /**
+ * Детальный отчёт по одному сотруднику — отдельным сообщением каждому его менеджеру.
+ *
+ * {name} здесь, как и в остальных сообщениях менеджеру, — имя получателя, а тот, о
+ * ком отчёт, приходит в {user}: одно сообщение всегда про одного человека, иначе
+ * разбор дня за днём превратился бы в нечитаемую простыню.
+ *
+ * @param template — шаблон
+ * @param {{ manager: object, user: object, report: string,
+ *           window: object, lookbackWorkingDays: number }} data
+ *   report — уже собранный текст «дата → строки», см. dailyReport.js
+ */
+export function renderDetailedReportMessage(
+  template,
+  { manager, user, report, window, lookbackWorkingDays }
+) {
+  return fillPlaceholders(template, {
+    name: firstName(manager.displayName),
+    user: user.displayName,
+    from: window.from,
+    to: window.to,
+    days: String(lookbackWorkingDays),
+    report,
+  });
+}
+
+/**
  * Подстановка за один проход: последовательные replaceAll подставили бы плейсхолдер,
  * пришедший из данных (например, имя вида «{days}»), на следующем шаге.
  */
 function fillPlaceholders(template, values) {
-  return String(template).replace(/\{(name|from|to|days|count|list|missingCount|missing)}/g, (match, key) =>
-    values[key] ?? match
+  return String(template).replace(
+    /\{(name|from|to|days|count|list|missingCount|missing|user|report)}/g,
+    (match, key) => values[key] ?? match
   );
 }
 

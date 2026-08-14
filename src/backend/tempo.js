@@ -37,6 +37,58 @@ export async function getWorklogDaysByAuthor(from, to, token) {
 }
 
 /**
+ * Все записи одного человека за окно — с задачей, описанием и work attributes.
+ *
+ * Здесь, в отличие от getWorklogDaysByAuthor, нужен не факт «день закрыт», а само
+ * содержимое, поэтому и эндпоинт другой: `/worklogs/user/{accountId}` тянет записи
+ * одного автора, а не весь инстанс. Детально отслеживаемых единицы, так что запрос
+ * на человека дешевле, чем прокачивать через себя чужие worklog'и.
+ *
+ * Ключа задачи в ответе нет — Tempo отдаёт только числовой id задачи в Jira,
+ * поэтому ключ и краткое описание добираются отдельно (см. getIssues в jira.js).
+ *
+ * @returns {Promise<Array<{day: string, issueId: number|null, issueKey: string|null,
+ *   description: string, workTypes: string[], timeSpentSeconds: number, startTime: string|null}>>}
+ */
+export async function getUserWorklogs(accountId, from, to, token) {
+  const entries = [];
+  let offset = 0;
+
+  while (true) {
+    const data = await tempoGet(
+      `${TEMPO_API}/worklogs/user/${encodeURIComponent(accountId)}` +
+        `?from=${from}&to=${to}&limit=${PAGE_LIMIT}&offset=${offset}`,
+      token
+    );
+    const results = data?.results ?? [];
+    for (const worklog of results) {
+      if (worklog?.startDate) entries.push(toEntry(worklog));
+    }
+    if (results.length < PAGE_LIMIT) break;
+    offset += PAGE_LIMIT;
+    await sleep(250);
+  }
+  return entries;
+}
+
+function toEntry(worklog) {
+  return {
+    day: worklog.startDate,
+    issueId: worklog.issue?.id ?? null,
+    // v4 кладёт в issue только self и id, но если ключ вдруг придёт — он точнее любого добора.
+    issueKey: worklog.issue?.key ?? null,
+    description: String(worklog.description ?? '').trim(),
+    // Work attribute — то, что в Tempo называется «Type of work». Атрибутов может быть
+    // несколько (у каждого свой ключ вида _WorkType_), поэтому храним списком значений.
+    workTypes: (worklog.attributes?.values ?? [])
+      .map((attribute) => String(attribute?.value ?? '').trim())
+      .filter(Boolean),
+    timeSpentSeconds: Number(worklog.timeSpentSeconds) || 0,
+    startTime: worklog.startTime ?? null,
+  };
+}
+
+/**
  * Дешёвая проверка токена для кнопки «Проверить подключение».
  */
 export async function testTempoToken(token) {

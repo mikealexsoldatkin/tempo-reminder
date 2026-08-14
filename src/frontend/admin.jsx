@@ -15,6 +15,7 @@ import { api } from './api';
 import { AddByNameSection } from './components/AddByNameSection';
 import { AddByProjectSection } from './components/AddByProjectSection';
 import { TrackedUsersTable } from './components/TrackedUsersTable';
+import { DetailedUsersTable } from './components/DetailedUsersTable';
 import { ManagersTable } from './components/ManagersTable';
 import { CredentialsTab } from './components/CredentialsTab';
 import { SettingsTab } from './components/SettingsTab';
@@ -33,11 +34,16 @@ const AdminPage = () => {
 
   const patch = useCallback((changes) => setState((prev) => ({ ...prev, ...changes })), []);
   const onUsersChange = useCallback((trackedUsers) => patch({ trackedUsers }), [patch]);
+  const onDetailedUsersChange = useCallback((detailedUsers) => patch({ detailedUsers }), [patch]);
   const onManagersChange = useCallback((managers) => patch({ managers }), [patch]);
 
   const trackedIds = useMemo(
     () => new Set((state?.trackedUsers ?? []).map((u) => u.accountId)),
     [state?.trackedUsers]
+  );
+  const detailedIds = useMemo(
+    () => new Set((state?.detailedUsers ?? []).map((u) => u.accountId)),
+    [state?.detailedUsers]
   );
   const managerIds = useMemo(
     () => new Set((state?.managers ?? []).map((m) => m.accountId)),
@@ -83,14 +89,18 @@ const AdminPage = () => {
             <Stack space="space.400">
               <AddByNameSection
                 trackedIds={trackedIds}
+                detailedIds={detailedIds}
                 managerIds={managerIds}
                 onUsersChange={onUsersChange}
+                onDetailedUsersChange={onDetailedUsersChange}
                 onManagersChange={onManagersChange}
               />
               <AddByProjectSection
                 trackedIds={trackedIds}
+                detailedIds={detailedIds}
                 managerIds={managerIds}
                 onUsersChange={onUsersChange}
+                onDetailedUsersChange={onDetailedUsersChange}
                 onManagersChange={onManagersChange}
               />
               <TrackedUsersTable
@@ -98,10 +108,16 @@ const AdminPage = () => {
                 managers={state.managers}
                 onUsersChange={onUsersChange}
               />
+              <DetailedUsersTable
+                users={state.detailedUsers ?? []}
+                managers={state.managers}
+                onDetailedUsersChange={onDetailedUsersChange}
+              />
               <ManagersTable
                 managers={state.managers}
                 onManagersChange={onManagersChange}
                 onUsersChange={onUsersChange}
+                onDetailedUsersChange={onDetailedUsersChange}
               />
             </Stack>
           </Box>
@@ -154,6 +170,7 @@ const AdminPage = () => {
               runStatus={state.runStatus}
               lastReport={state.lastReport}
               trackedCount={state.trackedUsers.length}
+              detailedCount={(state.detailedUsers ?? []).length}
               credentials={state.credentials}
               onRunStateChange={({ runStatus, lastReport }) => patch({ runStatus, lastReport })}
             />

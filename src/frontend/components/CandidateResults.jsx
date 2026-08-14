@@ -6,10 +6,17 @@ import { CandidateTable } from './CandidateTable';
  * Результаты поиска и действия над отмеченными — общий блок для поиска по имени
  * и по ключу проекта: обе секции отличаются только тем, как ищут людей.
  *
- * Выделение одно на оба действия: отмеченных можно либо поставить под наблюдение,
- * либо назначить менеджерами. Это разные списки, и человек может попасть в оба.
+ * Выделение одно на все действия: отмеченных можно поставить под наблюдение, завести
+ * им детальный отчёт или назначить менеджерами. Это три независимых списка, и один
+ * человек может попасть в любые из них.
  */
-export const CandidateResults = ({ search, trackedIds, managerIds, showRoles = false }) => {
+export const CandidateResults = ({
+  search,
+  trackedIds,
+  detailedIds,
+  managerIds,
+  showRoles = false,
+}) => {
   if (search.message && !(search.candidates && search.candidates.length > 0)) {
     return (
       <SectionMessage appearance={search.message.appearance}>
@@ -33,6 +40,7 @@ export const CandidateResults = ({ search, trackedIds, managerIds, showRoles = f
         selected={search.selected}
         onToggle={search.toggle}
         trackedIds={trackedIds}
+        detailedIds={detailedIds}
         managerIds={managerIds}
         showRoles={showRoles}
       />
@@ -44,7 +52,14 @@ export const CandidateResults = ({ search, trackedIds, managerIds, showRoles = f
           isDisabled={search.selected.size === 0 || search.busyAction !== null}
           onClick={() => search.submitSelected('track')}
         >
-          Add selected ({search.selected.size})
+          Track ({search.selected.size})
+        </LoadingButton>
+        <LoadingButton
+          isLoading={search.busyAction === 'detailed'}
+          isDisabled={search.selected.size === 0 || search.busyAction !== null}
+          onClick={() => search.submitSelected('detailed')}
+        >
+          Track in detail ({search.selected.size})
         </LoadingButton>
         <LoadingButton
           isLoading={search.busyAction === 'manager'}

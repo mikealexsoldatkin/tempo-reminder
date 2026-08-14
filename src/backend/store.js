@@ -10,6 +10,7 @@ import { DEFAULT_HOLIDAYS, holidayDate, normalizeHoliday } from './holidays.js';
 const KEY = {
   settings: 'settings',
   trackedUsers: 'tracked-users',
+  detailedUsers: 'detailed-users',
   managers: 'managers',
   credentialsMeta: 'credentials-meta',
   runStatus: 'run-status',
@@ -66,6 +67,11 @@ export const DEFAULT_SETTINGS = {
   // Плейсхолдеры: {from}, {to}, {days}, {name} и {count} — размер команды.
   managerAllClearTemplate:
     ':white_check_mark: Hi {name}! Everyone you manage has logged their time in Tempo for every one of the last {days} working days ({from} — {to}). Nothing to chase 🎉',
+  // Детальный отчёт по одному сотруднику из списка Detailed tracking users.
+  // Плейсхолдеры: {name} — имя менеджера-получателя, {user} — чей это отчёт,
+  // {from}, {to}, {days} и {report} — сам разбор по дням.
+  detailedReportTemplate:
+    ':mag: Hi {name}! Here is what {user} logged in Tempo over the last {days} working days ({from} — {to}):\n{report}',
 };
 
 /* ---------------------------- настройки ---------------------------- */
@@ -130,6 +136,9 @@ function normalizeSettings(settings) {
     ).slice(0, 1000),
     managerAllClearTemplate: String(
       settings.managerAllClearTemplate || DEFAULT_SETTINGS.managerAllClearTemplate
+    ).slice(0, 1000),
+    detailedReportTemplate: String(
+      settings.detailedReportTemplate || DEFAULT_SETTINGS.detailedReportTemplate
     ).slice(0, 1000),
   };
 }
@@ -239,6 +248,14 @@ const trackedUsers = peopleList(KEY.trackedUsers, {
   }),
 });
 
+// Детально отслеживаемые: список независим от Tracked users — человек может быть
+// в обоих, только в одном или ни в одном. Своего email им не нужно (сообщение уходит
+// менеджеру), но общая механика списка того не стоит, чтобы её здесь ломать.
+const detailedUsers = peopleList(KEY.detailedUsers, {
+  onCreate: () => ({ managerIds: [] }),
+  normalize: (user) => ({ ...user, managerIds: user.managerIds ?? [] }),
+});
+
 const managers = peopleList(KEY.managers);
 
 /* --------------------- отслеживаемые пользователи --------------------- */
@@ -268,18 +285,36 @@ export async function setTrackedUserCalendarName(accountId, calendarName) {
 }
 
 /**
- * Назначает пользователю менеджеров. Принимаем только тех, кто есть в списке
+ * Назначает человеку менеджеров. Принимаем только тех, кто есть в списке
  * менеджеров: иначе в записи копились бы ссылки на давно удалённых людей.
+ *
+ * Колонка Managers есть у обоих списков людей, но значит в них разное: у Tracked
+ * users — кому уйдёт дайджест о долге, у Detailed tracking users — кто получит
+ * подробный отчёт. Механика одна, поэтому она здесь.
  */
-export async function setTrackedUserManagers(accountId, managerIds) {
+async function assignManagers(list, listName, accountId, managerIds) {
   const known = new Set((await managers.read()).map((m) => m.accountId));
-  const users = await trackedUsers.read();
-  const user = users.find((u) => u.accountId === accountId);
-  if (!user) throw new Error(`User ${accountId} is not tracked`);
+  const people = await list.read();
+  const person = people.find((p) => p.accountId === accountId);
+  if (!person) throw new Error(`User ${accountId} is not in the ${listName} list`);
 
-  user.managerIds = [...new Set(managerIds ?? [])].filter((id) => known.has(id));
-  return trackedUsers.write(users);
+  person.managerIds = [...new Set(managerIds ?? [])].filter((id) => known.has(id));
+  return list.write(people);
 }
+
+export const setTrackedUserManagers = (accountId, managerIds) =>
+  assignManagers(trackedUsers, 'tracked users', accountId, managerIds);
+
+/* ------------------ детально отслеживаемые пользователи ------------------ */
+
+export const getDetailedUsers = () => detailedUsers.read();
+export const addDetailedUsers = async (candidates) => {
+  const { people, added, skipped } = await detailedUsers.add(candidates);
+  return { detailedUsers: people, added, skipped };
+};
+export const removeDetailedUsers = (accountIds) => detailedUsers.remove(accountIds);
+export const setDetailedUserManagers = (accountId, managerIds) =>
+  assignManagers(detailedUsers, 'detailed tracking', accountId, managerIds);
 
 /* ------------------------------ менеджеры ------------------------------ */
 
@@ -292,25 +327,31 @@ export const setManagerEmail = (accountId, email) => managers.setEmail(accountId
 export const cacheManagerSlackUserIds = (idsByAccountId) => managers.cacheSlackIds(idsByAccountId);
 
 /**
- * Удаление менеджера снимает его и со всех подчинённых: висящая ссылка на
- * удалённого человека молча выключила бы дайджест для этих сотрудников.
+ * Удаление менеджера снимает его и со всех подчинённых — в обоих списках: висящая
+ * ссылка на удалённого человека молча выключила бы и дайджест, и детальный отчёт.
  */
 export async function removeManagers(accountIds) {
   const drop = new Set(accountIds ?? []);
   const next = await managers.remove(accountIds);
 
-  const users = await trackedUsers.read();
+  return {
+    managers: next,
+    users: await detachManagers(trackedUsers, drop),
+    detailedUsers: await detachManagers(detailedUsers, drop),
+  };
+}
+
+async function detachManagers(list, drop) {
+  const people = await list.read();
   let changed = false;
-  for (const user of users) {
-    const kept = user.managerIds.filter((id) => !drop.has(id));
-    if (kept.length !== user.managerIds.length) {
-      user.managerIds = kept;
+  for (const person of people) {
+    const kept = (person.managerIds ?? []).filter((id) => !drop.has(id));
+    if (kept.length !== (person.managerIds ?? []).length) {
+      person.managerIds = kept;
       changed = true;
     }
   }
-  if (changed) await trackedUsers.write(users);
-
-  return { managers: next, users: changed ? await trackedUsers.read() : users };
+  return changed ? list.write(people) : people;
 }
 
 /* ------------------------------ праздники ------------------------------ */
@@ -483,14 +524,18 @@ export async function getLastReport() {
 const MAX_REPORT_ROWS = 300;
 // Менеджеров всегда на порядок меньше — им хватает лимита поменьше.
 const MAX_MANAGER_ROWS = 100;
+// Детальных отчётов ещё меньше: строка на пару «сотрудник — его менеджер».
+const MAX_DETAILED_ROWS = 100;
 
 // Что важнее увидеть в UI, если строк больше лимита.
 const ROW_PRIORITY = {
   error: 0,
   'no-slack': 1,
   'no-email': 1,
+  'no-manager': 1,
   reminded: 2,
   notified: 2,
+  reported: 2,
   logged: 3,
   'all-clear': 3,
   'on-leave': 3,
@@ -506,12 +551,15 @@ function trimRows(rows, limit) {
 export async function saveLastReport(report) {
   const users = trimRows(report.rows, MAX_REPORT_ROWS);
   const managerDigests = trimRows(report.managerRows, MAX_MANAGER_ROWS);
+  const detailed = trimRows(report.detailedRows, MAX_DETAILED_ROWS);
   const stored = {
     ...report,
     rows: users.rows,
     truncatedRows: users.truncated,
     managerRows: managerDigests.rows,
     truncatedManagerRows: managerDigests.truncated,
+    detailedRows: detailed.rows,
+    truncatedDetailedRows: detailed.truncated,
   };
   await kvs.set(KEY.lastReport, stored);
   return stored;
