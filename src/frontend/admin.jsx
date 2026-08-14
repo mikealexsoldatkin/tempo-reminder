@@ -17,6 +17,7 @@ import { AddByProjectSection } from './components/AddByProjectSection';
 import { TrackedUsersTable } from './components/TrackedUsersTable';
 import { ManagersTable } from './components/ManagersTable';
 import { CredentialsTab } from './components/CredentialsTab';
+import { HolidaysTab } from './components/HolidaysTab';
 import { RunTab } from './components/RunTab';
 import { ErrorBoundary } from './components/ErrorBoundary';
 
@@ -69,6 +70,7 @@ const AdminPage = () => {
         <TabList>
           <Tab>Users</Tab>
           <Tab>Tokens and settings</Tab>
+          <Tab>Holidays</Tab>
           <Tab>Run check</Tab>
         </TabList>
 
@@ -109,6 +111,16 @@ const AdminPage = () => {
               schedule={state.schedule}
               onCredentialsChange={(credentials) => patch({ credentials })}
               onSettingsChange={(settings) => patch({ settings })}
+            />
+          </Box>
+        </TabPanel>
+
+        <TabPanel>
+          <Box paddingBlockStart="space.200">
+            <HolidaysTab
+              holidays={state.holidays}
+              skipHolidays={state.settings.skipHolidays}
+              onHolidaysChange={(holidays) => patch({ holidays })}
             />
           </Box>
         </TabPanel>

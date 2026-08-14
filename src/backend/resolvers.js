@@ -5,24 +5,30 @@ import { testSlackToken } from './slack.js';
 import { enqueueRun } from './runQueue.js';
 import { describeSchedule } from './reminder.js';
 import {
+  addHoliday,
   addManagers,
   addTrackedUsers,
   clearCredential,
   getCredentials,
   getCredentialsStatus,
+  getHolidays,
   getLastReport,
   getManagers,
   getRunStatus,
   getSettings,
   getTrackedUsers,
+  removeHolidays,
   removeManagers,
   removeTrackedUsers,
+  resetHolidays,
   saveCredential,
   saveSettings,
   setManagerEmail,
   setTrackedUserEmail,
   setTrackedUserManagers,
 } from './store.js';
+import { describeHolidays } from './holidays.js';
+import { isoDate } from './workdays.js';
 
 // Собираем обработчики в объект и отдаём их в makeResolver, а не в `new Resolver()`:
 // package.json объявляет "type": "module", поэтому webpack связывает default-импорт
@@ -49,14 +55,16 @@ function define(key, handler) {
 
 /** Полное состояние страницы настроек за один вызов. */
 define('getState', async () => {
-  const [settings, trackedUsers, managers, credentials, runStatus, lastReport] = await Promise.all([
-    getSettings(),
-    getTrackedUsers(),
-    getManagers(),
-    getCredentialsStatus(),
-    getRunStatus(),
-    getLastReport(),
-  ]);
+  const [settings, trackedUsers, managers, credentials, runStatus, lastReport, holidays] =
+    await Promise.all([
+      getSettings(),
+      getTrackedUsers(),
+      getManagers(),
+      getCredentialsStatus(),
+      getRunStatus(),
+      getLastReport(),
+      getHolidays(),
+    ]);
   return {
     settings,
     trackedUsers,
@@ -64,9 +72,28 @@ define('getState', async () => {
     credentials,
     runStatus,
     lastReport,
+    holidays: withDates(holidays),
     schedule: await describeSchedule(settings),
   };
 });
+
+/* -------------------------------- праздники -------------------------------- */
+
+/**
+ * Правило разворачивает в дату бэкенд: календарная арифметика уже написана и
+ * покрыта тестами здесь, а UI остаётся простой таблицей.
+ */
+const withDates = (holidays) => describeHolidays(holidays, isoDate(new Date()));
+
+define('addHoliday', async ({ payload }) => ({
+  holidays: withDates(await addHoliday(payload?.holiday ?? {})),
+}));
+
+define('removeHolidays', async ({ payload }) => ({
+  holidays: withDates(await removeHolidays(payload?.ids ?? [])),
+}));
+
+define('resetHolidays', async () => ({ holidays: withDates(await resetHolidays()) }));
 
 /* ------------------------ отслеживаемые пользователи ------------------------ */
 

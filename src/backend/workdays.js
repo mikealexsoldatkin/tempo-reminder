@@ -28,19 +28,33 @@ export function addDays(isoDay, days) {
   return isoDate(new Date(toUtcMidnight(isoDay) + days * DAY_MS));
 }
 
+// Предохранитель от бесконечного отсчёта: календарь праздников задаёт человек, и
+// правило вроде «каждый день — праздник» не должно вешать функцию в очереди.
+const MAX_DAYS_TO_WALK_BACK = 400;
+
 /**
  * Последние `count` рабочих дней по состоянию на isoToday, от старых к свежим.
- * Сам isoToday входит в список, если он рабочий; если проверка запущена в выходной,
- * отсчёт начинается с ближайшего рабочего дня назад.
+ * Сам isoToday входит в список, если он рабочий; если проверка запущена в выходной
+ * или в праздник, отсчёт начинается с ближайшего рабочего дня назад.
  *
  * Дни возвращаются списком, а не парой границ: проверка идёт по каждому дню
- * отдельно, и выходные внутри окна в ней не участвуют.
+ * отдельно, и выходные с праздниками внутри окна в ней не участвуют.
+ *
+ * @param isoToday
+ * @param count
+ * @param {(isoDay: string) => unknown} [isHoliday] что считать праздником
  */
-export function lastWorkingDays(isoToday, count) {
+export function lastWorkingDays(isoToday, count, isHoliday = () => null) {
   const days = [];
   let cursor = isoToday;
-  while (days.length < count) {
-    if (!isWeekend(cursor)) days.unshift(cursor);
+
+  for (let walked = 0; days.length < count; walked++) {
+    if (walked > MAX_DAYS_TO_WALK_BACK) {
+      throw new Error(
+        `Couldn’t find ${count} working days before ${isoToday} — check the holiday calendar`
+      );
+    }
+    if (!isWeekend(cursor) && !isHoliday(cursor)) days.unshift(cursor);
     cursor = addDays(cursor, -1);
   }
   return days;

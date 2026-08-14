@@ -290,11 +290,22 @@ export const CredentialsTab = ({
           </SectionMessage>
         )}
 
-        <Checkbox
-          isChecked={form.skipWeekends}
-          label="Don’t run the scheduled check on weekends"
-          onChange={(e) => setForm((prev) => ({ ...prev, skipWeekends: e.target.checked }))}
-        />
+        <Inline space="space.400" alignBlock="center" shouldWrap>
+          <Checkbox
+            isChecked={form.skipWeekends}
+            label="Don’t run the scheduled check on weekends"
+            onChange={(e) => setForm((prev) => ({ ...prev, skipWeekends: e.target.checked }))}
+          />
+          <Checkbox
+            isChecked={form.skipHolidays}
+            label="Take the holiday calendar into account"
+            onChange={(e) => setForm((prev) => ({ ...prev, skipHolidays: e.target.checked }))}
+          />
+        </Inline>
+        <HelperMessage>
+          A holiday is not a working day: it never gets into the checked window, and the scheduled
+          run is skipped on it. Manage the list on the “Holidays” tab.
+        </HelperMessage>
 
         <Inline space="space.200" alignBlock="start" grow="fill">
           <Box xcss={templateFieldStyles}>

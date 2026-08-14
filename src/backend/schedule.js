@@ -1,4 +1,4 @@
-import { addDays, isoDate, isWeekend } from './workdays.js';
+import { addDays, isoDate } from './workdays.js';
 
 /**
  * Расписание проверок: во что превращается «запускать в 09:00 и 15:00».
@@ -103,10 +103,20 @@ export function dueRunTimes({
 /**
  * Ближайший запланированный запуск — для показа в настройках.
  * Возвращает {date, time} или null, если слотов нет вовсе.
+ *
+ * Какие дни пропускать, решает вызывающий: выходные и праздники включаются
+ * отдельными настройками, а сам календарь праздников живёт в KVS — модулю с
+ * чистыми функциями он не виден.
+ *
+ * @param runTimes
+ * @param {(isoDay: string) => boolean} [isSkippedDay]
+ * @param today
+ * @param nowMinutes
+ * @param handledTimes
  */
 export function nextRunTime({
   runTimes,
-  skipWeekends,
+  isSkippedDay = () => false,
   today,
   nowMinutes,
   handledTimes = [],
@@ -114,16 +124,16 @@ export function nextRunTime({
   if (!runTimes || runTimes.length === 0) return null;
   const handled = new Set(handledTimes);
 
-  if (!(skipWeekends && isWeekend(today))) {
+  if (!isSkippedDay(today)) {
     const upcoming = runTimes.find((time) => !handled.has(time) && toMinutes(time) > nowMinutes);
     if (upcoming) return { date: today, time: upcoming };
   }
 
-  // Дальше суток заглядывать незачем: список слотов одинаков для всех дней,
-  // а длиннее двух выходных подряд пропуск не бывает.
-  for (let ahead = 1; ahead <= 7; ahead++) {
+  // Список слотов одинаков для всех дней, поэтому ищем просто ближайший рабочий.
+  // Две недели с запасом: длиннее выходных с праздниками подряд не бывает.
+  for (let ahead = 1; ahead <= 14; ahead++) {
     const day = addDays(today, ahead);
-    if (skipWeekends && isWeekend(day)) continue;
+    if (isSkippedDay(day)) continue;
     return { date: day, time: runTimes[0] };
   }
   return null;

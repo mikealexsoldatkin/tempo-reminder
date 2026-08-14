@@ -26,6 +26,9 @@ export const api = {
   clearCredential: (name) => call('clearCredential', { name }),
   testConnections: () => call('testConnections'),
   saveSettings: (settings) => call('saveSettings', { settings }),
+  addHoliday: (holiday) => call('addHoliday', { holiday }),
+  removeHolidays: (ids) => call('removeHolidays', { ids }),
+  resetHolidays: () => call('resetHolidays'),
   startRun: () => call('startRun'),
   getRunState: () => call('getRunState'),
 };

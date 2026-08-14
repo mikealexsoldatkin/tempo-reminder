@@ -3,6 +3,7 @@ import {
   cacheSlackUserIds,
   getCredentials,
   getHandledRunTimes,
+  getHolidays,
   getManagers,
   getSettings,
   getTrackedUsers,
@@ -21,6 +22,7 @@ import {
   formatClock,
   nextRunTime,
 } from './schedule.js';
+import { makeHolidayChecker } from './holidays.js';
 import {
   countManagedPeople,
   countWithoutManager,
@@ -61,10 +63,13 @@ const SLACK_SEND_PAUSE_MS = 300;
 export async function runReminderCheck({ trigger, requestedBy = null, now = new Date() }) {
   const startedAt = new Date(now).toISOString();
   const settings = await getSettings();
+  // Праздник — не рабочий день: время за него не спрашивается, и планового прогона
+  // в этот день нет. Выключенная галочка превращает календарь в справочный список.
+  const isHoliday = settings.skipHolidays ? makeHolidayChecker(await getHolidays()) : () => null;
 
   // Плановый прогон ещё раз сверяется с расписанием: job мог пролежать в очереди
   // дольше, чем предполагалось при постановке. Ручной запуск расписанию не подчиняется.
-  const schedule = trigger === 'schedule' ? await evaluateSchedule(settings, now) : null;
+  const schedule = trigger === 'schedule' ? await evaluateSchedule(settings, now, isHoliday) : null;
   if (schedule && !schedule.shouldRun) {
     return finish({ trigger, requestedBy, startedAt, status: 'skipped', message: schedule.reason });
   }
@@ -79,7 +84,12 @@ export async function runReminderCheck({ trigger, requestedBy = null, now = new 
   const today = schedule?.date ?? dayParts(now).date;
   // Проверяем каждый рабочий день окна по отдельности, но за самые свежие дни
   // время ещё могут не успеть занести — их прощает «acceptable delay».
-  const checkedDays = lastWorkingDays(today, settings.lookbackWorkingDays);
+  let checkedDays;
+  try {
+    checkedDays = lastWorkingDays(today, settings.lookbackWorkingDays, isHoliday);
+  } catch (e) {
+    return finish({ trigger, requestedBy, startedAt, status: 'failed', message: e.message }, schedule);
+  }
   const requiredDays = daysToReport(checkedDays, settings.acceptableDelayDays);
   const window = windowOf(checkedDays);
   // Настройки нормализуются на чтении и такого не допускают; проверка здесь на
@@ -346,12 +356,21 @@ async function dm(person, text, slackBotToken, slackIdsToCache) {
  * Наступивших слотов может оказаться несколько — если триггер пропустил час. Прогон
  * при этом один, а закрываются все: два одинаковых сообщения подряд человеку не нужны.
  */
-export async function evaluateSchedule(settings, now = new Date()) {
+export async function evaluateSchedule(settings, now = new Date(), isHoliday = () => null) {
   const { date, minutes } = dayParts(now);
   const empty = { [RUN_KIND.users]: [], [RUN_KIND.managers]: [] };
 
   if (settings.runTimes.length === 0 && settings.managerRunTimes.length === 0) {
     return { shouldRun: false, date, due: empty, reason: 'No run times are configured — scheduled checks are off' };
+  }
+  const holiday = isHoliday(date);
+  if (holiday) {
+    return {
+      shouldRun: false,
+      date,
+      due: empty,
+      reason: `${holiday.name} — the scheduled run was skipped`,
+    };
   }
   if (settings.skipWeekends && isWeekend(date)) {
     return { shouldRun: false, date, due: empty, reason: 'Weekend — the scheduled run was skipped' };
@@ -388,11 +407,14 @@ async function dueFor(runTimes, kind, date, nowMinutes) {
  */
 export async function describeSchedule(settings, now = new Date()) {
   const { date, minutes } = dayParts(now);
+  const isHoliday = settings.skipHolidays ? makeHolidayChecker(await getHolidays()) : () => null;
+  const isSkippedDay = (day) =>
+    (settings.skipWeekends && isWeekend(day)) || Boolean(isHoliday(day));
 
   const next = async (runTimes, kind) =>
     nextRunTime({
       runTimes,
-      skipWeekends: settings.skipWeekends,
+      isSkippedDay,
       today: date,
       nowMinutes: minutes,
       handledTimes: await getHandledRunTimes(date, kind),

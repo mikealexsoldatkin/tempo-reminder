@@ -8,6 +8,7 @@ import {
   nextRunTime,
   parseRunTimes,
 } from '../src/backend/schedule.js';
+import { isWeekend } from '../src/backend/workdays.js';
 
 /* ------------------------------ разбор ввода ------------------------------ */
 
@@ -89,9 +90,13 @@ test('пропущенный час отдаёт оба слота сразу �
 
 /* --------------------------- ближайший запуск --------------------------- */
 
+// Какие дни пропускать, решает вызывающий: здесь — выходные, как при включённой
+// настройке skipWeekends.
+const skipWeekends = (day) => isWeekend(day);
+
 test('ближайший запуск — следующий слот в тех же сутках', () => {
   assert.deepEqual(
-    nextRunTime({ runTimes: times, skipWeekends: true, today: '2026-08-13', nowMinutes: 10 * 60 }),
+    nextRunTime({ runTimes: times, isSkippedDay: skipWeekends, today: '2026-08-13', nowMinutes: 10 * 60 }),
     { date: '2026-08-13', time: '15:00' }
   );
 });
@@ -99,26 +104,35 @@ test('ближайший запуск — следующий слот в тех 
 test('после последнего слота ближайший запуск переезжает на следующий рабочий день', () => {
   // 14.08.2026 — пятница, значит следующий запуск в понедельник 17-го.
   assert.deepEqual(
-    nextRunTime({ runTimes: times, skipWeekends: true, today: '2026-08-14', nowMinutes: 20 * 60 }),
+    nextRunTime({ runTimes: times, isSkippedDay: skipWeekends, today: '2026-08-14', nowMinutes: 20 * 60 }),
     { date: '2026-08-17', time: '09:00' }
   );
 });
 
 test('в выходной ближайший запуск не назначается на тот же день', () => {
   assert.deepEqual(
-    nextRunTime({ runTimes: times, skipWeekends: true, today: '2026-08-15', nowMinutes: 6 * 60 }),
+    nextRunTime({ runTimes: times, isSkippedDay: skipWeekends, today: '2026-08-15', nowMinutes: 6 * 60 }),
     { date: '2026-08-17', time: '09:00' }
   );
-  // А с выключенным пропуском выходных — назначается.
+  // А без пропуска выходных — назначается.
   assert.deepEqual(
-    nextRunTime({ runTimes: times, skipWeekends: false, today: '2026-08-15', nowMinutes: 6 * 60 }),
+    nextRunTime({ runTimes: times, today: '2026-08-15', nowMinutes: 6 * 60 }),
     { date: '2026-08-15', time: '09:00' }
+  );
+});
+
+test('праздник тоже пропускается — запуск переезжает через него', () => {
+  // Пятница 3 июля 2026 объявлена нерабочей: ближайший запуск — понедельник 6-го.
+  const skipped = (day) => isWeekend(day) || day === '2026-07-03';
+  assert.deepEqual(
+    nextRunTime({ runTimes: times, isSkippedDay: skipped, today: '2026-07-02', nowMinutes: 20 * 60 }),
+    { date: '2026-07-06', time: '09:00' }
   );
 });
 
 test('пустое расписание не имеет ближайшего запуска', () => {
   assert.equal(
-    nextRunTime({ runTimes: [], skipWeekends: true, today: '2026-08-14', nowMinutes: 0 }),
+    nextRunTime({ runTimes: [], isSkippedDay: skipWeekends, today: '2026-08-14', nowMinutes: 0 }),
     null
   );
 });

@@ -1,5 +1,6 @@
 import { kvs } from '@forge/kvs';
 import { MAX_RUN_TIMES, parseRunTimes } from './schedule.js';
+import { DEFAULT_HOLIDAYS, holidayDate, normalizeHoliday } from './holidays.js';
 
 /**
  * Всё состояние приложения живёт в Forge KVS (app storage), env-переменные не используются:
@@ -14,6 +15,7 @@ const KEY = {
   runStatus: 'run-status',
   lastReport: 'last-run-report',
   scheduleState: 'schedule-state',
+  holidays: 'holidays',
 };
 
 const SECRET_KEY = {
@@ -38,6 +40,9 @@ export const DEFAULT_SETTINGS = {
   managerRunTimes: [],
   // Пропускать ли запуск по расписанию в субботу/воскресенье.
   skipWeekends: true,
+  // Учитывать ли календарь праздников: праздник не считается рабочим днём (время
+  // за него не спрашивается) и планового прогона в этот день не будет.
+  skipHolidays: true,
   // Плейсхолдеры: {from}, {to}, {days}, {name}, {missing} — пропущенные дни
   // перечислением и {missingCount} — сколько их.
   messageTemplate:
@@ -106,6 +111,7 @@ function normalizeSettings(settings) {
     runTimes: parseRunTimes(settings.runTimes).times.slice(0, MAX_RUN_TIMES),
     managerRunTimes: parseRunTimes(settings.managerRunTimes).times.slice(0, MAX_RUN_TIMES),
     skipWeekends: Boolean(settings.skipWeekends),
+    skipHolidays: Boolean(settings.skipHolidays),
     messageTemplate: String(settings.messageTemplate || DEFAULT_SETTINGS.messageTemplate).slice(0, 1000),
     managerMessageTemplate: String(
       settings.managerMessageTemplate || DEFAULT_SETTINGS.managerMessageTemplate
@@ -273,6 +279,65 @@ export async function removeManagers(accountIds) {
   if (changed) await trackedUsers.write(users);
 
   return { managers: next, users: changed ? await trackedUsers.read() : users };
+}
+
+/* ------------------------------ праздники ------------------------------ */
+
+/**
+ * Календарь праздников. Пока в KVS ничего нет, отдаётся набор по умолчанию;
+ * пустой список — это осознанно очищенный администратором календарь, и подменять
+ * его дефолтом нельзя (иначе удалённые праздники возвращались бы сами).
+ */
+export async function getHolidays() {
+  const stored = await kvs.get(KEY.holidays);
+  if (!Array.isArray(stored)) return sortHolidays(DEFAULT_HOLIDAYS);
+
+  // Битую запись пропускаем молча: из-за одного испорченного правила не должна
+  // падать вся страница настроек и тем более прогон.
+  const holidays = [];
+  for (const raw of stored) {
+    try {
+      holidays.push(normalizeHoliday(raw));
+    } catch (e) {
+      console.warn(`Праздник пропущен: ${e.message}`);
+    }
+  }
+  return sortHolidays(holidays);
+}
+
+export async function addHoliday(raw) {
+  const holiday = normalizeHoliday(raw);
+  const holidays = await getHolidays();
+  if (holidays.some((existing) => existing.id === holiday.id)) {
+    throw new Error(`A holiday with id ${holiday.id} already exists`);
+  }
+  return writeHolidays([...holidays, holiday]);
+}
+
+export async function removeHolidays(ids) {
+  const drop = new Set(ids ?? []);
+  return writeHolidays((await getHolidays()).filter((holiday) => !drop.has(holiday.id)));
+}
+
+/** Возврат к набору по умолчанию — иначе удалённый праздник пришлось бы вводить руками. */
+export async function resetHolidays() {
+  return writeHolidays(DEFAULT_HOLIDAYS);
+}
+
+async function writeHolidays(holidays) {
+  const next = sortHolidays(holidays);
+  await kvs.set(KEY.holidays, next);
+  return next;
+}
+
+/** По дате в текущем году: календарь читается сверху вниз как календарь. */
+function sortHolidays(holidays) {
+  const year = new Date().getUTCFullYear();
+  return [...holidays].sort((a, b) => {
+    const dateA = holidayDate(a, year) ?? '';
+    const dateB = holidayDate(b, year) ?? '';
+    return dateA.localeCompare(dateB) || a.name.localeCompare(b.name);
+  });
 }
 
 /* ------------------------------ секреты ------------------------------ */
