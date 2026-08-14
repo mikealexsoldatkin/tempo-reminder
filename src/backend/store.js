@@ -1,4 +1,5 @@
 import { kvs } from '@forge/kvs';
+import { MAX_RUN_TIMES, parseRunTimes } from './schedule.js';
 
 /**
  * Всё состояние приложения живёт в Forge KVS (app storage), env-переменные не используются:
@@ -24,10 +25,11 @@ export const CREDENTIAL_NAMES = Object.keys(SECRET_KEY);
 export const DEFAULT_SETTINGS = {
   // Сколько рабочих дней назад смотрим (окно [from..today]).
   lookbackWorkingDays: 2,
+  // В какие моменты суток (UTC) запускать проверку — отсортированный список 'HH:MM'.
+  // Пустой список означает, что по расписанию проверка не запускается вообще.
+  runTimes: ['09:00'],
   // Пропускать ли запуск по расписанию в субботу/воскресенье.
   skipWeekends: true,
-  // Не отправлять повторно по расписанию, если сегодня уже был успешный плановый прогон.
-  oncePerDay: true,
   // Плейсхолдеры: {from}, {to}, {days}, {name}.
   messageTemplate:
     ':clock3: Hi {name}! It looks like Tempo has no time entries from you for the last {days} working days ({from} — {to}). Please take a moment to log your time 🙏',
@@ -37,21 +39,41 @@ export const DEFAULT_SETTINGS = {
 
 export async function getSettings() {
   const stored = (await kvs.get(KEY.settings)) ?? {};
-  return { ...DEFAULT_SETTINGS, ...stored };
+  // Нормализуем и на чтении: так наружу не протекают поля, оставшиеся от прежних
+  // версий настроек, а битое значение в KVS не роняет страницу.
+  return normalizeSettings({ ...DEFAULT_SETTINGS, ...stored });
 }
 
 export async function saveSettings(patch) {
-  const next = normalizeSettings({ ...(await getSettings()), ...patch });
+  const incoming = patch ?? {};
+  validateSettingsPatch(incoming);
+  const next = normalizeSettings({ ...(await getSettings()), ...incoming });
   await kvs.set(KEY.settings, next);
   return next;
+}
+
+/**
+ * Ругаемся на то, что администратор ввёл руками: молча подставить дефолт вместо
+ * непонятого времени хуже, чем показать ошибку в форме.
+ */
+function validateSettingsPatch(patch) {
+  if (patch.runTimes === undefined) return;
+
+  const { times, invalid } = parseRunTimes(patch.runTimes);
+  if (invalid.length > 0) {
+    throw new Error(`Couldn’t read the run times: ${invalid.join(', ')}. Use HH:MM separated by commas.`);
+  }
+  if (times.length > MAX_RUN_TIMES) {
+    throw new Error(`No more than ${MAX_RUN_TIMES} run times, got ${times.length}.`);
+  }
 }
 
 function normalizeSettings(settings) {
   const lookback = Number(settings.lookbackWorkingDays);
   return {
     lookbackWorkingDays: Number.isFinite(lookback) ? Math.min(Math.max(Math.trunc(lookback), 1), 30) : DEFAULT_SETTINGS.lookbackWorkingDays,
+    runTimes: parseRunTimes(settings.runTimes).times.slice(0, MAX_RUN_TIMES),
     skipWeekends: Boolean(settings.skipWeekends),
-    oncePerDay: Boolean(settings.oncePerDay),
     messageTemplate: String(settings.messageTemplate || DEFAULT_SETTINGS.messageTemplate).slice(0, 1000),
   };
 }
@@ -214,15 +236,23 @@ export async function setRunStatus(status) {
 }
 
 /**
- * Дата последней успешной плановой рассылки (YYYY-MM-DD) — отдельным ключом,
- * чтобы защита «раз в день» не сбивалась ручными прогонами, перетирающими отчёт.
+ * Слоты расписания, уже отработавшие в текущих сутках (UTC) — отдельным ключом,
+ * чтобы ручные прогоны, перетирающие отчёт, не сбивали расписание.
+ *
+ * Хранится ровно одна дата: как только наступают новые сутки, прежний список
+ * перестаёт быть актуальным и просто игнорируется.
  */
-export async function getLastScheduledOkDate() {
-  return (await kvs.get(KEY.scheduleState))?.lastOkDate ?? null;
+export async function getHandledRunTimes(date) {
+  const state = (await kvs.get(KEY.scheduleState)) ?? {};
+  return state.date === date ? state.handledTimes ?? [] : [];
 }
 
-export async function markScheduledRunOk(date) {
-  await kvs.set(KEY.scheduleState, { lastOkDate: date });
+export async function markRunTimesHandled(date, times) {
+  const already = await getHandledRunTimes(date);
+  await kvs.set(KEY.scheduleState, {
+    date,
+    handledTimes: [...new Set([...already, ...times])].sort(),
+  });
 }
 
 export async function getLastReport() {

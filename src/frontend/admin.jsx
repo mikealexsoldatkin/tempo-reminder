@@ -81,6 +81,7 @@ const AdminPage = () => {
             <CredentialsTab
               credentials={state.credentials}
               settings={state.settings}
+              schedule={state.schedule}
               onCredentialsChange={(credentials) => patch({ credentials })}
               onSettingsChange={(settings) => patch({ settings })}
             />

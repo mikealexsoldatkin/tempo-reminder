@@ -11,9 +11,12 @@ modules:
         function: resolver
       title: Tempo Reminders
   scheduledTrigger:
-    - key: tempo-reminder-daily
+    # Час — самая мелкая практичная гранулярность триггера. Конкретные времена
+    # рассылки задаются в настройках приложения (settings.runTimes), а функция
+    # на каждом срабатывании сверяется с ними; см. evaluateSchedule в reminder.js.
+    - key: tempo-reminder-hourly
       function: scheduled
-      interval: day  # options: fiveMinute | hour | day | week
+      interval: hour  # options: fiveMinute | hour | day | week
   consumer:
     - key: tempo-reminder-run-consumer
       queue: reminder-run

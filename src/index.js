@@ -1,6 +1,6 @@
 import { handler as adminResolver } from './backend/resolvers.js';
 import { enqueueRun } from './backend/runQueue.js';
-import { resolveSkipReason, runReminderCheck } from './backend/reminder.js';
+import { evaluateSchedule, runReminderCheck } from './backend/reminder.js';
 import { getSettings, saveLastReport, setRunStatus } from './backend/store.js';
 
 /**
@@ -16,21 +16,23 @@ import { getSettings, saveLastReport, setRunStatus } from './backend/store.js';
 export const resolver = adminResolver;
 
 /**
- * Плановый запуск. Выходные и «раз в день» проверяем ещё до постановки в очередь:
- * иначе каждый выходной создавался бы job, который только перетирал бы отчёт
- * последнего реального прогона. Тот же самый guard стоит и внутри прогона —
- * job может выполниться заметно позже, чем был поставлен.
+ * Часовое срабатывание триггера. Само по себе оно ничего не значит: время рассылки
+ * задаётся списком в настройках, и подавляющее большинство срабатываний должно
+ * закончиться здесь же, ничего не делая.
+ *
+ * Расписание сверяется до постановки в очередь — иначе каждый час создавался бы job,
+ * который только перетирал бы отчёт последнего реального прогона. Тот же guard стоит
+ * и внутри прогона: job может выполниться заметно позже, чем был поставлен.
  */
 export async function scheduled() {
-  const now = new Date();
-  const skipReason = await resolveSkipReason('schedule', await getSettings(), now);
-  if (skipReason) {
-    console.log(skipReason);
+  const schedule = await evaluateSchedule(await getSettings(), new Date());
+  if (!schedule.shouldRun) {
+    console.log(`Пропуск: ${schedule.reason}`);
     return;
   }
 
   const { message } = await enqueueRun('schedule');
-  console.log(`Плановый прогон: ${message}`);
+  console.log(`Плановый прогон (слоты ${schedule.dueTimes.join(', ')}): ${message}`);
 }
 
 /**

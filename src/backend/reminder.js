@@ -1,16 +1,24 @@
 import {
   cacheSlackUserIds,
   getCredentials,
-  getLastScheduledOkDate,
+  getHandledRunTimes,
   getSettings,
   getTrackedUsers,
-  markScheduledRunOk,
+  markRunTimesHandled,
   saveLastReport,
   setRunStatus,
 } from './store.js';
 import { getWorklogAuthors, sleep } from './tempo.js';
 import { lookupSlackUserByEmail, sendSlackDm } from './slack.js';
-import { isWeekend, isoDate, workingDayWindow } from './workdays.js';
+import { isWeekend, workingDayWindow } from './workdays.js';
+import {
+  CATCH_UP_MINUTES,
+  SCHEDULE_TIME_ZONE,
+  dayParts,
+  dueRunTimes,
+  formatClock,
+  nextRunTime,
+} from './schedule.js';
 
 export const OUTCOME = {
   reminded: 'reminded',
@@ -34,12 +42,15 @@ export async function runReminderCheck({ trigger, requestedBy = null, now = new 
   const startedAt = new Date(now).toISOString();
   const settings = await getSettings();
 
-  const skipReason = await resolveSkipReason(trigger, settings, now);
-  if (skipReason) {
-    return finish({ trigger, requestedBy, startedAt, status: 'skipped', message: skipReason });
+  // Плановый прогон ещё раз сверяется с расписанием: job мог пролежать в очереди
+  // дольше, чем предполагалось при постановке. Ручной запуск расписанию не подчиняется.
+  const schedule = trigger === 'schedule' ? await evaluateSchedule(settings, now) : null;
+  if (schedule && !schedule.shouldRun) {
+    return finish({ trigger, requestedBy, startedAt, status: 'skipped', message: schedule.reason });
   }
 
-  const window = workingDayWindow(now, settings.lookbackWorkingDays);
+  const today = schedule?.date ?? dayParts(now).date;
+  const window = workingDayWindow(today, settings.lookbackWorkingDays);
   const users = await getTrackedUsers();
   if (users.length === 0) {
     return finish({
@@ -49,7 +60,7 @@ export async function runReminderCheck({ trigger, requestedBy = null, now = new 
       window,
       status: 'skipped',
       message: 'The tracked users list is empty — add users in the app settings',
-    });
+    }, schedule);
   }
 
   const { tempoToken, slackBotToken } = await getCredentials();
@@ -65,10 +76,13 @@ export async function runReminderCheck({ trigger, requestedBy = null, now = new 
       window,
       status: 'failed',
       message: `Missing tokens: ${missing.join(', ')} — set them in the app settings`,
-    });
+    }, schedule);
   }
 
-  console.log(`Прогон (${trigger}): окно ${window.from}..${window.to}, отслеживается ${users.length} чел.`);
+  console.log(
+    `Прогон (${trigger}${schedule ? `, слоты ${schedule.dueTimes.join(', ')}` : ''}): ` +
+      `окно ${window.from}..${window.to}, отслеживается ${users.length} чел.`
+  );
 
   let authorsWithWorklogs;
   try {
@@ -81,7 +95,7 @@ export async function runReminderCheck({ trigger, requestedBy = null, now = new 
       window,
       status: 'failed',
       message: `Couldn’t fetch worklogs from Tempo: ${e.message}`,
-    });
+    }, schedule);
   }
   console.log(`Tempo: ${authorsWithWorklogs.size} авторов с записями в окне`);
 
@@ -134,22 +148,64 @@ export async function runReminderCheck({ trigger, requestedBy = null, now = new 
     message: `Checked ${rows.length} people, reminders sent: ${totals.reminded}`,
     rows,
     totals,
-  });
+  }, schedule);
 }
 
 /**
- * Причина не запускаться: выходной или сегодня уже был плановый прогон.
- * Ручной запуск из настроек не ограничиваем — он всегда выполняется.
+ * Пора ли запускать плановую проверку прямо сейчас.
+ *
+ * Триггер будит функцию раз в час, а расписание задаётся списком времён в настройках —
+ * значит решение принимается здесь. Слот считается наступившим, если его время уже
+ * прошло (но не больше чем на CATCH_UP_MINUTES) и он ещё не отработал в текущих сутках.
+ *
+ * Наступивших слотов может оказаться несколько — если триггер пропустил час. Прогон
+ * при этом один, а закрываются все: два одинаковых сообщения подряд человеку не нужны.
  */
-export async function resolveSkipReason(trigger, settings, now) {
-  if (trigger !== 'schedule') return null;
+export async function evaluateSchedule(settings, now = new Date()) {
+  const { date, minutes } = dayParts(now);
+  const idle = (reason) => ({ shouldRun: false, date, dueTimes: [], reason });
 
-  if (settings.skipWeekends && isWeekend(now)) return 'Weekend — the scheduled run was skipped';
-
-  if (settings.oncePerDay && (await getLastScheduledOkDate()) === isoDate(now)) {
-    return 'The scheduled run already completed today — the repeat was skipped';
+  if (settings.runTimes.length === 0) {
+    return idle('No run times are configured — scheduled checks are off');
   }
-  return null;
+  if (settings.skipWeekends && isWeekend(date)) {
+    return idle('Weekend — the scheduled run was skipped');
+  }
+
+  const dueTimes = dueRunTimes({
+    runTimes: settings.runTimes,
+    nowMinutes: minutes,
+    handledTimes: await getHandledRunTimes(date),
+    catchUpMinutes: CATCH_UP_MINUTES,
+  });
+  if (dueTimes.length === 0) {
+    return idle(
+      `It’s ${formatClock(minutes)} ${SCHEDULE_TIME_ZONE} — no run time is due, the scheduled run was skipped`
+    );
+  }
+
+  return { shouldRun: true, date, dueTimes, reason: null };
+}
+
+/**
+ * Для страницы настроек: текущее время и ближайший запланированный запуск.
+ */
+export async function describeSchedule(settings, now = new Date()) {
+  const { date, minutes } = dayParts(now);
+  const next = nextRunTime({
+    runTimes: settings.runTimes,
+    skipWeekends: settings.skipWeekends,
+    today: date,
+    nowMinutes: minutes,
+    handledTimes: await getHandledRunTimes(date),
+  });
+
+  return {
+    timeZone: SCHEDULE_TIME_ZONE,
+    now: `${date} ${formatClock(minutes)}`,
+    nextRun: next ? `${next.date} ${next.time}` : null,
+    catchUpMinutes: CATCH_UP_MINUTES,
+  };
 }
 
 function renderMessage(template, user, window, settings) {
@@ -182,7 +238,7 @@ function countOutcomes(rows) {
   return totals;
 }
 
-async function finish(report) {
+async function finish(report, schedule = null) {
   const full = {
     rows: [],
     totals: { tracked: 0, logged: 0, reminded: 0, skipped: 0, failed: 0 },
@@ -191,8 +247,11 @@ async function finish(report) {
     finishedAt: new Date().toISOString(),
   };
   const saved = await saveLastReport(full);
-  if (full.trigger === 'schedule' && full.status === 'ok') {
-    await markScheduledRunOk(full.startedAt.slice(0, 10));
+  // Слоты закрываются только после успеха: если Tempo или Slack не ответили,
+  // слот остаётся наступившим и следующее часовое срабатывание повторит попытку
+  // — но лишь пока не вышло окно CATCH_UP_MINUTES.
+  if (full.status === 'ok' && schedule?.dueTimes?.length) {
+    await markRunTimesHandled(schedule.date, schedule.dueTimes);
   }
   await setRunStatus({ state: 'idle', lastTrigger: full.trigger, lastStatus: full.status });
   if (full.status !== 'ok') console.log(`Прогон завершён со статусом ${full.status}: ${full.message}`);

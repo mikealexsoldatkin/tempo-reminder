@@ -3,6 +3,7 @@ import { isJiraAdmin, searchProjectMembers, searchUsersByName } from './jira.js'
 import { testTempoToken } from './tempo.js';
 import { testSlackToken } from './slack.js';
 import { enqueueRun } from './runQueue.js';
+import { describeSchedule } from './reminder.js';
 import {
   addTrackedUsers,
   clearCredential,
@@ -50,7 +51,14 @@ define('getState', async () => {
     getRunStatus(),
     getLastReport(),
   ]);
-  return { settings, trackedUsers, credentials, runStatus, lastReport };
+  return {
+    settings,
+    trackedUsers,
+    credentials,
+    runStatus,
+    lastReport,
+    schedule: await describeSchedule(settings),
+  };
 });
 
 /* ------------------------ отслеживаемые пользователи ------------------------ */
@@ -94,9 +102,12 @@ define('testConnections', async () => {
   return { tempo, slack };
 });
 
-define('saveSettings', async ({ payload }) => ({
-  settings: await saveSettings(payload?.settings ?? {}),
-}));
+define('saveSettings', async ({ payload }) => {
+  const settings = await saveSettings(payload?.settings ?? {});
+  // Расписание пересчитываем сразу: администратор должен увидеть, во что превратился
+  // введённый им список времён и когда теперь ближайший запуск.
+  return { settings, schedule: await describeSchedule(settings) };
+});
 
 /* --------------------------------- прогон --------------------------------- */
 

@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import {
   Box,
-  Button,
   Checkbox,
   Heading,
   HelperMessage,
@@ -31,15 +30,29 @@ const CREDENTIALS = [
 ];
 
 /**
+ * Времена запуска хранятся массивом ('HH:MM'), а редактируются одной строкой —
+ * бэкенд принимает и то, и другое, поэтому форма держит строку и не пытается
+ * разбирать ввод на лету: нормализацию делает сервер и возвращает результат.
+ */
+const toForm = (settings) => ({ ...settings, runTimes: (settings.runTimes ?? []).join(', ') });
+
+/**
  * Токены хранятся в секретном хранилище Forge (kvs.setSecret) и наружу не отдаются:
  * UI видит только «задан / не задан», последние 4 символа и дату обновления.
  */
-export const CredentialsTab = ({ credentials, settings, onCredentialsChange, onSettingsChange }) => {
+export const CredentialsTab = ({
+  credentials,
+  settings,
+  schedule,
+  onCredentialsChange,
+  onSettingsChange,
+}) => {
   const [inputs, setInputs] = useState({ tempoToken: '', slackBotToken: '' });
   const [busy, setBusy] = useState(null);
   const [message, setMessage] = useState(null);
   const [testResults, setTestResults] = useState(null);
-  const [form, setForm] = useState(settings);
+  const [form, setForm] = useState(() => toForm(settings));
+  const [scheduleInfo, setScheduleInfo] = useState(schedule ?? null);
   const [isSavingSettings, setIsSavingSettings] = useState(false);
 
   const withBusy = async (key, action) => {
@@ -81,7 +94,8 @@ export const CredentialsTab = ({ credentials, settings, onCredentialsChange, onS
     setMessage(null);
     try {
       const result = await api.saveSettings(form);
-      setForm(result.settings);
+      setForm(toForm(result.settings));
+      setScheduleInfo(result.schedule ?? null);
       onSettingsChange(result.settings);
       setMessage({ appearance: 'success', text: 'Settings saved' });
     } catch (e) {
@@ -181,15 +195,36 @@ export const CredentialsTab = ({ credentials, settings, onCredentialsChange, onS
         />
         <HelperMessage>The check window is the last N working days, including today.</HelperMessage>
 
+        <Label labelFor="run-times">Run times</Label>
+        <Textfield
+          id="run-times"
+          width={320}
+          value={form.runTimes}
+          placeholder="09:00, 15:00"
+          onChange={(e) => setForm((prev) => ({ ...prev, runTimes: e.target.value }))}
+        />
+        <HelperMessage>
+          24-hour clock in UTC, comma-separated. Each time fires at most once a day. The scheduled
+          trigger wakes up once an hour, so a check starts at the first wake-up after the time you
+          set{scheduleInfo?.catchUpMinutes ? `, and is dropped if that turns out to be more than ${scheduleInfo.catchUpMinutes} minutes late` : ''}.
+          Leave the field empty to turn scheduled checks off — the Run check tab still works.
+        </HelperMessage>
+
+        {scheduleInfo && (
+          <SectionMessage appearance="information">
+            <Text>
+              Now in {scheduleInfo.timeZone}: {scheduleInfo.now}.{' '}
+              {scheduleInfo.nextRun
+                ? `Next scheduled check: ${scheduleInfo.nextRun}.`
+                : 'No scheduled checks — the run times list is empty.'}
+            </Text>
+          </SectionMessage>
+        )}
+
         <Checkbox
           isChecked={form.skipWeekends}
           label="Don’t run the scheduled check on weekends"
           onChange={(e) => setForm((prev) => ({ ...prev, skipWeekends: e.target.checked }))}
-        />
-        <Checkbox
-          isChecked={form.oncePerDay}
-          label="Don’t repeat the scheduled run if it already succeeded today"
-          onChange={(e) => setForm((prev) => ({ ...prev, oncePerDay: e.target.checked }))}
         />
 
         <Label labelFor="template">Reminder text</Label>
