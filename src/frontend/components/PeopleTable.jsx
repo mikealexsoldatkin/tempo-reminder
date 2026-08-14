@@ -27,7 +27,7 @@ import {
  * (у него четыре useState). Сам InlineEdit остаётся элементом в возвращённом
  * дереве, монтируется обычным путём и держит своё состояние у себя.
  *
- * То же правило действует и для extraColumn: renderCell обязан возвращать либо
+ * То же правило действует и для extraColumns: renderCell обязан возвращать либо
  * примитив UI Kit, либо компонент без хуков.
  */
 const EmailCell = ({ email, onConfirm }) => (
@@ -51,7 +51,7 @@ const EmailCell = ({ email, onConfirm }) => (
  * @param {Array} props.people кого показываем
  * @param {(accountIds: string[]) => Promise<void>} props.onRemove
  * @param {(accountId: string, email: string) => Promise<void>} props.onSetEmail
- * @param {{key: string, header: string, renderCell: (person: object) => JSX.Element}} [props.extraColumn]
+ * @param {Array<{key: string, header: string, renderCell: (person: object) => JSX.Element}>} [props.extraColumns]
  */
 export const PeopleTable = ({
   title,
@@ -59,7 +59,7 @@ export const PeopleTable = ({
   emptyMessage,
   onRemove,
   onSetEmail,
-  extraColumn = null,
+  extraColumns = [],
 }) => {
   const [selected, setSelected] = useState(new Set());
   const [isBusy, setIsBusy] = useState(false);
@@ -92,7 +92,7 @@ export const PeopleTable = ({
       { key: 'select', content: '', width: 5 },
       { key: 'name', content: 'Name' },
       { key: 'email', content: 'Email for Slack lookup' },
-      ...(extraColumn ? [{ key: extraColumn.key, content: extraColumn.header }] : []),
+      ...extraColumns.map(({ key, header }) => ({ key, content: header })),
       { key: 'slack', content: 'Slack' },
       { key: 'actions', content: '', width: 10 },
     ],
@@ -121,7 +121,7 @@ export const PeopleTable = ({
           />
         ),
       },
-      ...(extraColumn ? [{ key: extraColumn.key, content: extraColumn.renderCell(person) }] : []),
+      ...extraColumns.map(({ key, renderCell }) => ({ key, content: renderCell(person) })),
       {
         key: 'slack',
         content: (

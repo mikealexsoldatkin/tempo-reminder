@@ -25,6 +25,7 @@ const OUTCOME_VIEW = {
   logged: { appearance: 'success', label: 'time logged' },
   notified: { appearance: 'inprogress', label: 'digest sent' },
   'all-clear': { appearance: 'success', label: 'all clear sent' },
+  'on-leave': { appearance: 'moved', label: 'on leave' },
   'no-email': { appearance: 'removed', label: 'no email' },
   'no-slack': { appearance: 'removed', label: 'not in Slack' },
   error: { appearance: 'removed', label: 'error' },
@@ -217,8 +218,18 @@ const LastReport = ({ report }) => {
       <Text>{report.message}</Text>
       <Text>
         Checked: {report.totals.tracked}, logged time: {report.totals.logged}, reminders:{' '}
-        {report.totals.reminded}, skipped: {report.totals.skipped}, errors: {report.totals.failed}
+        {report.totals.reminded}, on leave: {report.totals.onLeave ?? 0}, skipped:{' '}
+        {report.totals.skipped}, errors: {report.totals.failed}
       </Text>
+
+      {/* Молчание календаря отпусков неотличимо от «отпусков нет», поэтому о том,
+          что он не прочитался, отчёт говорит прямо: прогон в этом случае не
+          останавливается, но людям в отпуске могли уйти напоминания. */}
+      {report.vacations?.warning && (
+        <SectionMessage appearance="warning">
+          <Text>{report.vacations.warning}</Text>
+        </SectionMessage>
+      )}
       {report.truncatedRows > 0 && (
         <Text>Not all rows are shown: {report.truncatedRows} more hidden, see the full list in `forge logs`.</Text>
       )}

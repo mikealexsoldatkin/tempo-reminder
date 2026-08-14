@@ -19,6 +19,7 @@ import { ManagersTable } from './components/ManagersTable';
 import { CredentialsTab } from './components/CredentialsTab';
 import { SettingsTab } from './components/SettingsTab';
 import { HolidaysTab } from './components/HolidaysTab';
+import { VacationsTab } from './components/VacationsTab';
 import { RunTab } from './components/RunTab';
 import { ErrorBoundary } from './components/ErrorBoundary';
 
@@ -73,6 +74,7 @@ const AdminPage = () => {
           <Tab>Access tokens</Tab>
           <Tab>Check parameters</Tab>
           <Tab>Holidays</Tab>
+          <Tab>Vacations</Tab>
           <Tab>Run check</Tab>
         </TabList>
 
@@ -131,6 +133,17 @@ const AdminPage = () => {
               settings={state.settings}
               onHolidaysChange={(holidays) => patch({ holidays })}
               onSettingsChange={(settings) => patch({ settings })}
+            />
+          </Box>
+        </TabPanel>
+
+        <TabPanel>
+          <Box paddingBlockStart="space.200">
+            <VacationsTab
+              settings={state.settings}
+              credentials={state.credentials}
+              onSettingsChange={(settings) => patch({ settings })}
+              onCredentialsChange={(credentials) => patch({ credentials })}
             />
           </Box>
         </TabPanel>

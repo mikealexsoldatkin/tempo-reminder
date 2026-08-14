@@ -2,6 +2,7 @@ import { makeResolver } from '@forge/resolver';
 import { isJiraAdmin, searchProjectMembers, searchUsersByName } from './jira.js';
 import { testTempoToken } from './tempo.js';
 import { testSlackToken } from './slack.js';
+import { testVacationCalendar } from './vacationCalendar.js';
 import { enqueueRun } from './runQueue.js';
 import { describeSchedule } from './reminder.js';
 import {
@@ -24,6 +25,7 @@ import {
   saveCredential,
   saveSettings,
   setManagerEmail,
+  setTrackedUserCalendarName,
   setTrackedUserEmail,
   setTrackedUserManagers,
 } from './store.js';
@@ -115,6 +117,10 @@ define('setTrackedUserManagers', async ({ payload }) => ({
   users: await setTrackedUserManagers(payload?.accountId, payload?.managerIds ?? []),
 }));
 
+define('setTrackedUserCalendarName', async ({ payload }) => ({
+  users: await setTrackedUserCalendarName(payload?.accountId, payload?.calendarName),
+}));
+
 /* --------------------------------- менеджеры --------------------------------- */
 
 define('addManagers', ({ payload }) => addManagers(payload?.users ?? []));
@@ -149,6 +155,24 @@ define('testConnections', async () => {
       : Promise.resolve({ ok: false, message: 'Slack bot token is not set' }),
   ]);
   return { tempo, slack };
+});
+
+/**
+ * Проверка календаря отпусков. Отвечает не только «читается / не читается»:
+ * администратору нужно видеть, как заголовки событий раскладываются на список
+ * отслеживаемых, иначе разошедшееся написание имени обнаружится только по
+ * напоминанию, ушедшему человеку в отпуске.
+ */
+define('testVacationCalendar', async () => {
+  const { vacationIcsUrl } = await getCredentials();
+  if (!vacationIcsUrl) {
+    return { ok: false, message: 'The vacation calendar iCal address is not set' };
+  }
+  return testVacationCalendar({
+    icsUrl: vacationIcsUrl,
+    people: await getTrackedUsers(),
+    today: isoDate(new Date()),
+  });
 });
 
 define('saveSettings', async ({ payload }) => {

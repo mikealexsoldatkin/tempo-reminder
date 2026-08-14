@@ -23,6 +23,8 @@ import {
   nextRunTime,
 } from './schedule.js';
 import { makeHolidayChecker } from './holidays.js';
+import { getVacationDays } from './vacationCalendar.js';
+import { excludeVacationDays } from './vacations.js';
 import {
   countManagedPeople,
   countWithoutManager,
@@ -37,6 +39,7 @@ export const OUTCOME = {
   logged: 'logged',
   notified: 'notified',
   allClear: 'all-clear',
+  onLeave: 'on-leave',
   noEmail: 'no-email',
   noSlack: 'no-slack',
   error: 'error',
@@ -117,7 +120,7 @@ export async function runReminderCheck({ trigger, requestedBy = null, now = new 
     }, schedule);
   }
 
-  const { tempoToken, slackBotToken } = await getCredentials();
+  const { tempoToken, slackBotToken, vacationIcsUrl } = await getCredentials();
   const missing = [
     !tempoToken && 'Tempo API token',
     !slackBotToken && 'Slack bot token',
@@ -161,16 +164,40 @@ export async function runReminderCheck({ trigger, requestedBy = null, now = new 
 
   // Дни без записей у каждого отслеживаемого — считаем один раз: они нужны и для
   // самих напоминаний, и для списка в дайджесте менеджеру, и для отчёта.
-  const missingDaysByUser = new Map(
+  const missingBeforeVacations = new Map(
     users.map((user) => {
       const reported = daysByAuthor.get(user.accountId) ?? new Set();
       return [user.accountId, requiredDays.filter((day) => !reported.has(day))];
     })
   );
+
+  // Отпускной день — не долг: за него не спрашивают ни сотрудника, ни менеджера.
+  // Календарь читается до отправки, чтобы такие дни исчезли из пропущенных ещё
+  // до того, как кто-то попадёт в список должников.
+  const vacations = await loadVacations({
+    settings,
+    users,
+    icsUrl: vacationIcsUrl,
+    range: { from: requiredDays[0], to: today },
+  });
+  const { missingDaysByUser, excusedDaysByUser } = excludeVacationDays(
+    missingBeforeVacations,
+    vacations.daysByPerson
+  );
   const unreported = users.filter((user) => missingDaysByUser.get(user.accountId).length > 0);
 
   const rows = targets.users
-    ? await remindUsers({ users, missingDaysByUser, requiredDays, window, settings, slackBotToken })
+    ? await remindUsers({
+        users,
+        missingDaysByUser,
+        excusedDaysByUser,
+        vacationDaysByPerson: vacations.daysByPerson,
+        today,
+        requiredDays,
+        window,
+        settings,
+        slackBotToken,
+      })
     : [];
   const managerRows = targets.managers
     ? await notifyManagers({
@@ -204,7 +231,69 @@ export async function runReminderCheck({ trigger, requestedBy = null, now = new 
     totals,
     managerRows,
     managerTotals,
+    vacations: vacations.report,
   }, schedule);
+}
+
+/**
+ * Отпуска из корпоративного календаря — по одному запросу на прогон.
+ *
+ * Ошибка календаря не останавливает рассылку: остаться без напоминаний из-за
+ * недоступности Google хуже, чем один раз дёрнуть отпускника. Но и молчать о ней
+ * нельзя — иначе «отпусков нет» не отличить от «календарь не прочитался», поэтому
+ * причина уезжает в отчёт и в лог.
+ *
+ * @returns {Promise<{daysByPerson: Map<string, Set<string>>, report: object}>}
+ */
+async function loadVacations({ settings, users, icsUrl, range }) {
+  const empty = new Map();
+  if (!settings.skipVacations) {
+    return { daysByPerson: empty, report: { enabled: false, used: false, warning: null } };
+  }
+  if (!icsUrl) {
+    return {
+      daysByPerson: empty,
+      report: {
+        enabled: true,
+        used: false,
+        warning:
+          'The vacation calendar is on, but its iCal address is not set — vacations were ignored',
+      },
+    };
+  }
+
+  try {
+    const result = await getVacationDays({ icsUrl, people: users, range });
+    const peopleOnLeave = result.daysByPerson.size;
+    console.log(
+      `Календарь отпусков: событий ${result.totalEvents}, сматчилось ${result.matchedEvents}, ` +
+        `людей с отпуском в окне ${peopleOnLeave}, не сматчилось заголовков ${result.unmatched.length}`
+    );
+    return {
+      daysByPerson: result.daysByPerson,
+      report: {
+        enabled: true,
+        used: true,
+        warning:
+          result.recurringSkipped > 0
+            ? `${result.recurringSkipped} repeating calendar events were ignored — the app doesn’t expand recurring events`
+            : null,
+        matchedEvents: result.matchedEvents,
+        unmatchedTitles: result.unmatched.length,
+        peopleOnLeave,
+      },
+    };
+  } catch (e) {
+    console.error(`Календарь отпусков не прочитан: ${e.message}`);
+    return {
+      daysByPerson: empty,
+      report: {
+        enabled: true,
+        used: false,
+        warning: `Couldn’t read the vacation calendar: ${e.message} — vacations were ignored`,
+      },
+    };
+  }
 }
 
 /**
@@ -214,6 +303,9 @@ export async function runReminderCheck({ trigger, requestedBy = null, now = new 
 async function remindUsers({
   users,
   missingDaysByUser,
+  excusedDaysByUser,
+  vacationDaysByPerson,
+  today,
   requiredDays,
   window,
   settings,
@@ -224,8 +316,29 @@ async function remindUsers({
 
   for (const user of users) {
     const missingDays = missingDaysByUser.get(user.accountId) ?? [];
+    const excusedDays = excusedDaysByUser.get(user.accountId) ?? [];
     if (missingDays.length === 0) {
-      rows.push(row(user, OUTCOME.logged, `Has entries for all ${requiredDays.length} checked days`));
+      // Отпуск закрыл ровно те дни, за которые записей нет: человек ничего не
+      // должен, и в отчёте это отдельный исход — иначе выглядело бы так, будто
+      // время залогировано.
+      rows.push(
+        excusedDays.length > 0
+          ? row(user, OUTCOME.onLeave, `On leave for the days with no entries: ${formatDays(excusedDays)}`)
+          : row(user, OUTCOME.logged, `Has entries for all ${requiredDays.length} checked days`)
+      );
+      continue;
+    }
+
+    // Человек в отпуске сегодня, но за более старые дни окна долг есть. Напомним,
+    // когда выйдет: писать в отпуск бессмысленно. Менеджеру он в дайджест попадёт.
+    if (settings.skipDmWhileOnLeave && vacationDaysByPerson.get(user.accountId)?.has(today)) {
+      rows.push(
+        row(
+          user,
+          OUTCOME.onLeave,
+          `On leave today — the reminder was held back, missing: ${formatDays(missingDays)}`
+        )
+      );
       continue;
     }
 
@@ -471,10 +584,11 @@ function managerRow(manager, reportedCount, outcome, detail) {
 }
 
 function countUserOutcomes(rows) {
-  const totals = { tracked: rows.length, logged: 0, reminded: 0, skipped: 0, failed: 0 };
+  const totals = { tracked: rows.length, logged: 0, reminded: 0, onLeave: 0, skipped: 0, failed: 0 };
   for (const { outcome } of rows) {
     if (outcome === OUTCOME.logged) totals.logged++;
     else if (outcome === OUTCOME.reminded) totals.reminded++;
+    else if (outcome === OUTCOME.onLeave) totals.onLeave++;
     else if (outcome === OUTCOME.error) totals.failed++;
     else totals.skipped++;
   }
@@ -504,6 +618,7 @@ function countManagerOutcomes(rows, unreported) {
 function summarize(targets, totals, managerTotals, unreportedCount) {
   const parts = [`${unreportedCount} of the tracked people are missing at least one checked day`];
   if (targets.users) parts.push(`reminders sent: ${totals.reminded}`);
+  if (targets.users && totals.onLeave > 0) parts.push(`on leave: ${totals.onLeave}`);
   if (targets.managers) {
     parts.push(
       `manager digests sent: ${managerTotals.notified}, all-clear notes: ${managerTotals.allClear}`
@@ -516,9 +631,11 @@ function summarize(targets, totals, managerTotals, unreportedCount) {
 async function finish(report, schedule = null) {
   const full = {
     rows: [],
-    totals: { tracked: 0, logged: 0, reminded: 0, skipped: 0, failed: 0 },
+    totals: { tracked: 0, logged: 0, reminded: 0, onLeave: 0, skipped: 0, failed: 0 },
     managerRows: [],
     managerTotals: { managers: 0, notified: 0, allClear: 0, failed: 0, skipped: 0, withoutManager: 0 },
+    // Что вышло с календарём отпусков: включён ли он, прочитался ли и что мешало.
+    vacations: { enabled: false, used: false, warning: null },
     window: null,
     // Дни, за которые время уже обязано быть залогировано — окно минус допустимая задержка.
     requiredDays: [],

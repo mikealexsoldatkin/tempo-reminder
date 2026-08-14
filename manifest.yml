@@ -39,3 +39,5 @@ permissions:
       backend:
         - address: 'api.tempo.io'
         - address: 'slack.com'
+        # Календарь отпусков читается по «Secret address in iCal format».
+        - address: 'calendar.google.com'

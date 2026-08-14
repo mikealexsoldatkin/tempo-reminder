@@ -21,6 +21,9 @@ const KEY = {
 const SECRET_KEY = {
   tempoToken: 'tempo-token',
   slackBotToken: 'slack-bot-token',
+  // «Secret address in iCal format» календаря отпусков: ссылка сама себе пароль,
+  // поэтому хранится там же, где токены, и наружу не отдаётся.
+  vacationIcsUrl: 'vacation-ics-url',
 };
 
 export const CREDENTIAL_NAMES = Object.keys(SECRET_KEY);
@@ -43,6 +46,13 @@ export const DEFAULT_SETTINGS = {
   // Учитывать ли календарь праздников: праздник не считается рабочим днём (время
   // за него не спрашивается) и планового прогона в этот день не будет.
   skipHolidays: true,
+  // Учитывать ли корпоративный календарь отпусков. По умолчанию выключено: пока
+  // ссылка на календарь не задана, включать нечего.
+  skipVacations: false,
+  // Не писать сотруднику, пока он в отпуске, даже если за более старые дни окна
+  // у него действительно нет записей: напомним, когда выйдет. Менеджеру такой
+  // человек в дайджест всё равно попадёт.
+  skipDmWhileOnLeave: false,
   // Плейсхолдеры: {from}, {to}, {days}, {name}, {missing} — пропущенные дни
   // перечислением и {missingCount} — сколько их.
   messageTemplate:
@@ -112,6 +122,8 @@ function normalizeSettings(settings) {
     managerRunTimes: parseRunTimes(settings.managerRunTimes).times.slice(0, MAX_RUN_TIMES),
     skipWeekends: Boolean(settings.skipWeekends),
     skipHolidays: Boolean(settings.skipHolidays),
+    skipVacations: Boolean(settings.skipVacations),
+    skipDmWhileOnLeave: Boolean(settings.skipDmWhileOnLeave),
     messageTemplate: String(settings.messageTemplate || DEFAULT_SETTINGS.messageTemplate).slice(0, 1000),
     managerMessageTemplate: String(
       settings.managerMessageTemplate || DEFAULT_SETTINGS.managerMessageTemplate
@@ -216,10 +228,15 @@ function peopleList(storageKey, { onCreate = () => ({}), normalize = (person) =>
   return { read, write, add, remove, setEmail, cacheSlackIds };
 }
 
-// managerIds появилось позже самих записей, поэтому подставляем пустой список на чтении.
+// managerIds и calendarName появились позже самих записей, поэтому подставляем
+// значения по умолчанию на чтении.
 const trackedUsers = peopleList(KEY.trackedUsers, {
-  onCreate: () => ({ managerIds: [] }),
-  normalize: (user) => ({ ...user, managerIds: user.managerIds ?? [] }),
+  onCreate: () => ({ managerIds: [], calendarName: null }),
+  normalize: (user) => ({
+    ...user,
+    managerIds: user.managerIds ?? [],
+    calendarName: user.calendarName ?? null,
+  }),
 });
 
 const managers = peopleList(KEY.managers);
@@ -234,6 +251,21 @@ export const addTrackedUsers = async (candidates) => {
 export const removeTrackedUsers = (accountIds) => trackedUsers.remove(accountIds);
 export const setTrackedUserEmail = (accountId, email) => trackedUsers.setEmail(accountId, email);
 export const cacheSlackUserIds = (idsByAccountId) => trackedUsers.cacheSlackIds(idsByAccountId);
+
+/**
+ * Как человек назван в календаре отпусков, если там его пишут не так, как в Jira.
+ * Пустое значение возвращает поиск к displayName. Несколько написаний задаются
+ * через запятую — совпадения любого из них достаточно.
+ */
+export async function setTrackedUserCalendarName(accountId, calendarName) {
+  const users = await trackedUsers.read();
+  const user = users.find((u) => u.accountId === accountId);
+  if (!user) throw new Error(`User ${accountId} is not tracked`);
+
+  const value = String(calendarName ?? '').trim();
+  user.calendarName = value.length > 0 ? value.slice(0, 200) : null;
+  return trackedUsers.write(users);
+}
 
 /**
  * Назначает пользователю менеджеров. Принимаем только тех, кто есть в списке
@@ -343,33 +375,40 @@ function sortHolidays(holidays) {
 /* ------------------------------ секреты ------------------------------ */
 
 export async function getCredentials() {
-  const [tempoToken, slackBotToken] = await Promise.all([
-    kvs.getSecret(SECRET_KEY.tempoToken),
-    kvs.getSecret(SECRET_KEY.slackBotToken),
-  ]);
-  return { tempoToken: tempoToken ?? null, slackBotToken: slackBotToken ?? null };
+  const values = await Promise.all(CREDENTIAL_NAMES.map((name) => kvs.getSecret(SECRET_KEY[name])));
+  return Object.fromEntries(CREDENTIAL_NAMES.map((name, i) => [name, values[i] ?? null]));
 }
 
 /**
- * Статус для UI: сам токен не отдаём, только «задан / не задан», хвост и время обновления.
+ * Статус для UI: сам секрет не отдаём, только «задан / не задан», хвост и время обновления.
  */
 export async function getCredentialsStatus() {
-  const [{ tempoToken, slackBotToken }, meta] = await Promise.all([
+  const [credentials, meta] = await Promise.all([
     getCredentials(),
     kvs.get(KEY.credentialsMeta).then((v) => v ?? {}),
   ]);
+  return Object.fromEntries(
+    CREDENTIAL_NAMES.map((name) => [name, describeCredential(name, credentials[name], meta[name])])
+  );
+}
+
+function describeCredential(name, value, meta) {
   return {
-    tempoToken: describeCredential(tempoToken, meta.tempoToken),
-    slackBotToken: describeCredential(slackBotToken, meta.slackBotToken),
+    isSet: Boolean(value),
+    // У токена показываем хвост — по нему администратор узнаёт, какой именно
+    // токен лежит. У ссылки на календарь хвост всегда один и тот же (basic.ics),
+    // а вот id календаря секретом не является и сразу отвечает на вопрос
+    // «тот ли календарь подключён».
+    maskedTail: value ? (name === 'vacationIcsUrl' ? calendarIdOf(value) : `…${String(value).slice(-4)}`) : null,
+    updatedAt: meta?.updatedAt ?? null,
   };
 }
 
-function describeCredential(value, meta) {
-  return {
-    isSet: Boolean(value),
-    maskedTail: value ? `…${String(value).slice(-4)}` : null,
-    updatedAt: meta?.updatedAt ?? null,
-  };
+/** `…/ical/{id}/private-{key}/basic.ics` → id календаря, без секретной части. */
+function calendarIdOf(icsUrl) {
+  const id = /\/ical\/([^/]+)\//.exec(String(icsUrl))?.[1];
+  if (!id) return 'link set';
+  return decodeURIComponent(id).split('@')[0].slice(0, 40);
 }
 
 export async function saveCredential(name, value) {
@@ -454,6 +493,7 @@ const ROW_PRIORITY = {
   notified: 2,
   logged: 3,
   'all-clear': 3,
+  'on-leave': 3,
 };
 
 function trimRows(rows, limit) {
