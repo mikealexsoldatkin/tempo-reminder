@@ -22,9 +22,14 @@ import { api } from '../api';
 // страницы и остаются одинаковыми, каких бы размеров ни было окно.
 const templateFieldStyles = xcss({ width: '100%', flexGrow: 1 });
 
-// Четыре числовых поля стоят одним рядом и делят ширину поровну. flexBasis держит
-// нижнюю границу: на узком окне ряд переносится, а не сжимается в нечитаемое.
-const fieldColumnStyles = xcss({ width: '100%', flexGrow: 1, flexBasis: '180px' });
+// Четыре поля стоят одним рядом и делят ширину поровну — тот же приём, что и у
+// шаблонов ниже: width 100% + flexGrow внутри Inline с grow="fill".
+//
+// Ни shouldWrap, ни flexBasis тут не помощники: при переносе строки каждое поле
+// требует свои width: 100% и ряд рассыпается в столбик, а flexBasis до вёрстки
+// не доезжает — xcss пропускает только белый список свойств, и его там нет.
+// Нижнюю границу держит minWidth: он в белый список входит.
+const fieldColumnStyles = xcss({ width: '100%', flexGrow: 1, minWidth: '160px' });
 
 /**
  * Задержка не может съесть всё окно — иначе спрашивать было бы не о чем. Бэкенд
@@ -163,7 +168,7 @@ export const SettingsTab = ({ settings, schedule, onSettingsChange }) => {
         There is no Save button: every field is saved when you click out of it.
       </HelperMessage>
 
-      <Inline space="space.200" alignBlock="start" shouldWrap>
+      <Inline space="space.200" alignBlock="start" grow="fill">
         <Box xcss={fieldColumnStyles}>
           <Stack space="space.050">
             <Label labelFor="lookback">Working days to check</Label>
@@ -256,7 +261,7 @@ export const SettingsTab = ({ settings, schedule, onSettingsChange }) => {
         </SectionMessage>
       )}
 
-      <Inline space="space.200" alignBlock="start" grow="fill" shouldWrap>
+      <Inline space="space.200" alignBlock="start" grow="fill">
         <Box xcss={templateFieldStyles}>
           <Stack space="space.050">
             <Label labelFor="template">Reminder text</Label>

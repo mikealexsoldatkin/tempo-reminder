@@ -45,6 +45,24 @@ export const TrackedUsersTable = ({ users, managers, onUsersChange }) => (
       }
       extraColumns={[
         {
+          key: 'calendarName',
+          header: 'Name in the vacation calendar',
+          renderCell: (user, mutate) => (
+            <CalendarNameCell
+              user={user}
+              onConfirm={(calendarName) =>
+                mutate(async () =>
+                  onUsersChange(
+                    await api
+                      .setTrackedUserCalendarName(user.accountId, calendarName)
+                      .then((r) => r.users)
+                  )
+                )
+              }
+            />
+          ),
+        },
+        {
           key: 'managers',
           header: 'Managers who get the basic report',
           renderCell: (user, mutate) => (
@@ -81,24 +99,6 @@ export const TrackedUsersTable = ({ users, managers, onUsersChange }) => (
                   onUsersChange(
                     await api
                       .setTrackedUserDetailedManagers(user.accountId, managerIds ?? [])
-                      .then((r) => r.users)
-                  )
-                )
-              }
-            />
-          ),
-        },
-        {
-          key: 'calendarName',
-          header: 'Name in the vacation calendar',
-          renderCell: (user, mutate) => (
-            <CalendarNameCell
-              user={user}
-              onConfirm={(calendarName) =>
-                mutate(async () =>
-                  onUsersChange(
-                    await api
-                      .setTrackedUserCalendarName(user.accountId, calendarName)
                       .then((r) => r.users)
                   )
                 )

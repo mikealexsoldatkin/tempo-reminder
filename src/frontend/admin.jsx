@@ -26,10 +26,15 @@ import { RunTab } from './components/RunTab';
 import { ReadinessBanner } from './components/ReadinessBanner';
 import { ErrorBoundary } from './components/ErrorBoundary';
 
-// Две секции поиска стоят рядом: каждая занимает половину ширины и ужимается
-// вместе с окном. width 100% + flexGrow внутри Inline означает «поделить поровну
-// всё, что есть», а shouldWrap на узком экране ставит их обратно друг под друга.
-const searchColumnStyles = xcss({ width: '100%', flexGrow: 1, flexBasis: '360px' });
+// Две секции поиска стоят рядом, в одну строку: width 100% + flexGrow внутри
+// Inline с grow="fill" означает «поделить поровну всё, что есть», и колонки
+// ужимаются вместе с окном.
+//
+// Без shouldWrap намеренно: при переносе строки каждая колонка требует свои
+// width: 100% и они встают друг под друга. Задать вместо этого нижнюю границу
+// через flexBasis нельзя — xcss пропускает только белый список свойств, и
+// flexBasis в него не входит (в отличие от flexGrow, width и minWidth).
+const searchColumnStyles = xcss({ width: '100%', flexGrow: 1 });
 
 const AdminPage = () => {
   const [state, setState] = useState(null);
@@ -113,7 +118,7 @@ const AdminPage = () => {
         <TabPanel>
           <Box paddingBlockStart="space.200">
             <Stack space="space.400">
-              <Inline space="space.400" alignBlock="start" shouldWrap>
+              <Inline space="space.400" alignBlock="start" grow="fill">
                 <Box xcss={searchColumnStyles}>
                   <AddByNameSection
                     trackedIds={trackedIds}
