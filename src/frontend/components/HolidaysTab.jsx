@@ -184,7 +184,7 @@ export const HolidaysTab = ({ holidays, skipHolidays, onHolidaysChange }) => {
         {!skipHolidays && (
           <SectionMessage appearance="warning">
             <Text>
-              “Take the holiday calendar into account” is off on the “Tokens and settings” tab, so
+              “Take the holiday calendar into account” is off on the “Check parameters” tab, so
               this list changes nothing right now — holidays are treated as ordinary working days.
             </Text>
           </SectionMessage>

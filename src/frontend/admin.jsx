@@ -17,6 +17,7 @@ import { AddByProjectSection } from './components/AddByProjectSection';
 import { TrackedUsersTable } from './components/TrackedUsersTable';
 import { ManagersTable } from './components/ManagersTable';
 import { CredentialsTab } from './components/CredentialsTab';
+import { SettingsTab } from './components/SettingsTab';
 import { HolidaysTab } from './components/HolidaysTab';
 import { RunTab } from './components/RunTab';
 import { ErrorBoundary } from './components/ErrorBoundary';
@@ -69,7 +70,8 @@ const AdminPage = () => {
       <Tabs id="tempo-reminder-tabs">
         <TabList>
           <Tab>Users</Tab>
-          <Tab>Tokens and settings</Tab>
+          <Tab>Access tokens</Tab>
+          <Tab>Check parameters</Tab>
           <Tab>Holidays</Tab>
           <Tab>Run check</Tab>
         </TabList>
@@ -107,9 +109,16 @@ const AdminPage = () => {
           <Box paddingBlockStart="space.200">
             <CredentialsTab
               credentials={state.credentials}
+              onCredentialsChange={(credentials) => patch({ credentials })}
+            />
+          </Box>
+        </TabPanel>
+
+        <TabPanel>
+          <Box paddingBlockStart="space.200">
+            <SettingsTab
               settings={state.settings}
               schedule={state.schedule}
-              onCredentialsChange={(credentials) => patch({ credentials })}
               onSettingsChange={(settings) => patch({ settings })}
             />
           </Box>
