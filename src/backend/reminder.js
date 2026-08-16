@@ -8,6 +8,7 @@ import {
   getSettings,
   getTrackedUsers,
   markRunTimesHandled,
+  markSlackConnectionRevoked,
   saveLastReport,
   setRunProgress,
   setRunStatus,
@@ -15,6 +16,7 @@ import {
 import { getUserWorklogs, getWorklogDaysByAuthor, sleep } from './tempo.js';
 import { getIssues } from './jira.js';
 import { lookupSlackUserByEmail, sendSlackDm } from './slack.js';
+import { isRevokedTokenError } from './slackOAuthState.js';
 import { daysToReport, isWeekend, lastWorkingDays, windowOf } from './workdays.js';
 import {
   CATCH_UP_MINUTES,
@@ -686,6 +688,11 @@ async function dm(person, text, slackBotToken, slackIdsToCache) {
     return { outcome: OUTCOME.reminded, detail: 'Reminder sent' };
   } catch (e) {
     console.error(`Ошибка для ${person.accountId}: ${e.message}`);
+    // «Токен отозвали» — это не про одного получателя, а про всё подключение:
+    // без пометки страница настроек показывала бы подключённый workspace и
+    // молчащую рассылку одновременно. Отметка идемпотентна — сюда в сломанном
+    // прогоне приходит каждый.
+    if (isRevokedTokenError(e.slackError)) await markSlackConnectionRevoked(e.slackError);
     return { outcome: OUTCOME.error, detail: e.message };
   }
 }

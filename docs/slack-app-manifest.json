@@ -1,0 +1,36 @@
+{
+  "_comment": [
+    "Манифест Slack-приложения для Tempo Reminders — вставляется на https://api.slack.com/apps",
+    "→ Create New App → From a manifest. Заменить redirect_urls на адрес опубликованной",
+    "страницы docs/slack-callback/index.html (её же значение уходит в SLACK_REDIRECT_URI).",
+    "Slack показывает этот ключ как неизвестное поле и игнорирует его — при желании удалите.",
+    "Scope'ы: chat:write — написать в личку, users:read + users:read.email — найти человека",
+    "по адресу из Jira. Больше приложению не нужно ничего.",
+    "org_deploy_enabled: false — установка на всю организацию (Enterprise Grid) не",
+    "поддерживается: часть методов Slack требует для org-wide токенов явного team_id.",
+    "token_rotation_enabled: false — ротацию обратно выключить нельзя, а с ней bot-токен",
+    "живёт 12 часов и требует отдельного триггера обновления."
+  ],
+  "display_information": {
+    "name": "Tempo Reminders",
+    "description": "Reminds people in Slack when they have not logged time in Tempo",
+    "background_color": "#172b4d"
+  },
+  "features": {
+    "bot_user": {
+      "display_name": "Tempo Reminders",
+      "always_online": false
+    }
+  },
+  "oauth_config": {
+    "redirect_urls": ["https://mikealexsoldatkin.github.io/tempo-reminder/slack-callback/"],
+    "scopes": {
+      "bot": ["chat:write", "users:read", "users:read.email"]
+    }
+  },
+  "settings": {
+    "org_deploy_enabled": false,
+    "socket_mode_enabled": false,
+    "token_rotation_enabled": false
+  }
+}

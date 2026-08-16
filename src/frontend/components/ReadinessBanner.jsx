@@ -12,16 +12,23 @@ import { SectionMessage, Stack, Text } from '@forge/react';
  * Различаем два уровня: blocker — без этого не уйдёт ни одно сообщение, warning —
  * приложение работает, но часть задуманного молчит.
  */
-export const ReadinessBanner = ({ settings, credentials, trackedUsers, managers }) => {
+export const ReadinessBanner = ({ settings, credentials, slack, trackedUsers, managers }) => {
   const users = trackedUsers ?? [];
   const withDetailed = users.filter((user) => (user.detailedManagerIds ?? []).length > 0).length;
   const withoutManager = users.filter((user) => (user.managerIds ?? []).length === 0).length;
 
   const blockers = [
     !credentials?.tempoToken?.isSet &&
-      'The Tempo API token is not set — worklogs can’t be read. See the “Access tokens” tab.',
+      'The Tempo API token is not set — worklogs can’t be read. See the “Access” tab.',
     !credentials?.slackBotToken?.isSet &&
-      'The Slack bot token is not set — nothing can be delivered. See the “Access tokens” tab.',
+      'Slack is not connected — nothing can be delivered. Press “Connect Slack” on the “Access” tab.',
+    // Подключение есть, но Slack его больше не принимает: приложение удалили из
+    // workspace или отозвали токен. Отдельная строка, потому что чинится это не
+    // «задайте токен», а «подключитесь заново», и незаданному токену такое
+    // состояние не равно — на вкладке всё ещё написано, к какому workspace.
+    credentials?.slackBotToken?.isSet &&
+      slack?.connection?.revokedError &&
+      `Slack rejected the connection (${slack.connection.revokedError}) — nothing is being delivered. Reconnect on the “Access” tab.`,
     users.length === 0 &&
       'Nobody is tracked yet — add people on the “Users” tab.',
   ].filter(Boolean);

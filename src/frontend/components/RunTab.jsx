@@ -180,7 +180,7 @@ export const RunTab = ({
 
         {tokensMissing && (
           <SectionMessage appearance="warning">
-            <Text>Set the Tempo API token and the Slack bot token on the “Access tokens” tab first.</Text>
+            <Text>Connect Slack and set the Tempo API token on the “Access” tab first.</Text>
           </SectionMessage>
         )}
 

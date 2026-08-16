@@ -2,6 +2,8 @@ import { makeResolver } from '@forge/resolver';
 import { isJiraAdmin, searchProjectMembers, searchUsersByName } from './jira.js';
 import { testTempoToken } from './tempo.js';
 import { testSlackToken } from './slack.js';
+import { disconnectSlack, getSlackStatus, startSlackConnect } from './slackOAuth.js';
+import { isRevokedTokenError } from './slackOAuthState.js';
 import { testVacationCalendar } from './vacationCalendar.js';
 import { enqueueRun } from './runQueue.js';
 import { describeSchedule } from './reminder.js';
@@ -18,6 +20,7 @@ import {
   getRunStatus,
   getSettings,
   getTrackedUsers,
+  markSlackConnectionRevoked,
   removeHolidays,
   removeManagers,
   removeTrackedUsers,
@@ -58,12 +61,13 @@ function define(key, handler) {
 
 /** Полное состояние страницы настроек за один вызов. */
 define('getState', async () => {
-  const [settings, trackedUsers, managers, credentials, runStatus, lastReport, holidays] =
+  const [settings, trackedUsers, managers, credentials, slack, runStatus, lastReport, holidays] =
     await Promise.all([
       getSettings(),
       getTrackedUsers(),
       getManagers(),
       getCredentialsStatus(),
+      getSlackStatus(),
       getRunStatus(),
       getLastReport(),
       getHolidays(),
@@ -73,6 +77,7 @@ define('getState', async () => {
     trackedUsers,
     managers,
     credentials,
+    slack,
     runStatus,
     lastReport,
     holidays: withDates(holidays),
@@ -144,12 +149,12 @@ define('setManagerEmail', async ({ payload }) => ({
 
 define('saveCredential', async ({ payload }) => {
   await saveCredential(payload?.name, payload?.value);
-  return { credentials: await getCredentialsStatus() };
+  return { credentials: await getCredentialsStatus(), slack: await getSlackStatus() };
 });
 
 define('clearCredential', async ({ payload }) => {
   await clearCredential(payload?.name);
-  return { credentials: await getCredentialsStatus() };
+  return { credentials: await getCredentialsStatus(), slack: await getSlackStatus() };
 });
 
 define('testConnections', async () => {
@@ -160,8 +165,12 @@ define('testConnections', async () => {
       : Promise.resolve({ ok: false, message: 'Tempo API token is not set' }),
     slackBotToken
       ? testSlackToken(slackBotToken)
-      : Promise.resolve({ ok: false, message: 'Slack bot token is not set' }),
+      : Promise.resolve({ ok: false, message: 'Slack is not connected' }),
   ]);
+  // Проверка — второе место (после прогона), где видно, что токен на той стороне
+  // отозвали. Молчать об этом здесь значило бы оставить в сводке готовности
+  // «подключено» рядом с красной строкой проверки.
+  if (isRevokedTokenError(slack.slackError)) await markSlackConnectionRevoked(slack.slackError);
   return { tempo, slack };
 });
 
@@ -188,6 +197,29 @@ define('saveSettings', async ({ payload }) => {
   // Расписание пересчитываем сразу: администратор должен увидеть, во что превратился
   // введённый им список времён и когда теперь ближайший запуск.
   return { settings, schedule: await describeSchedule(settings) };
+});
+
+/* ----------------------------- подключение Slack ----------------------------- */
+
+/**
+ * Ссылку на экран согласия собирает бэкенд: в ней одноразовый nonce и адрес
+ * веб-триггера этой установки, и то и другое фронтенду знать неоткуда.
+ * Открывает её страница настроек — router.open в соседней вкладке.
+ */
+define('startSlackConnect', ({ context }) => startSlackConnect(context?.accountId ?? null));
+
+/**
+ * Опрос, пока администратор ходит по вкладке Slack: подключение приезжает не
+ * в ответ на действие в UI, а через веб-триггер, и заметить его можно только так.
+ */
+define('getSlackStatus', async () => ({
+  slack: await getSlackStatus(),
+  credentials: await getCredentialsStatus(),
+}));
+
+define('disconnectSlack', async () => {
+  const revoked = await disconnectSlack();
+  return { revoked, credentials: await getCredentialsStatus(), slack: await getSlackStatus() };
 });
 
 /* --------------------------------- прогон --------------------------------- */

@@ -1,16 +1,20 @@
 import { handler as adminResolver } from './backend/resolvers.js';
 import { enqueueRun } from './backend/runQueue.js';
 import { describeDue, evaluateSchedule, runReminderCheck } from './backend/reminder.js';
+import { handleSlackOAuthCallback } from './backend/slackOAuth.js';
 import { getSettings, saveLastReport, setRunStatus } from './backend/store.js';
 
 /**
  * Точки входа приложения:
- *  - resolver    — страница настроек (jira:adminPage), см. src/backend/resolvers.js;
- *  - scheduled   — ежедневный триггер, ставит прогон в очередь;
- *  - runConsumer — консьюмер очереди, где прогон реально выполняется.
+ *  - resolver           — страница настроек (jira:adminPage), см. src/backend/resolvers.js;
+ *  - scheduled          — ежедневный триггер, ставит прогон в очередь;
+ *  - runConsumer        — консьюмер очереди, где прогон реально выполняется;
+ *  - slackOAuthCallback — веб-триггер, куда возвращается браузер после Slack.
  *
- * Токены и список отслеживаемых пользователей живут в Forge KVS,
- * env-переменные приложение больше не использует.
+ * Токены и список отслеживаемых пользователей живут в Forge KVS. Переменные
+ * окружения приложение использует ровно для одного — настроек своего
+ * Slack-приложения (SLACK_CLIENT_ID / SLACK_CLIENT_SECRET / SLACK_REDIRECT_URI):
+ * они одни на все установки и задаются при сборке, а не администратором.
  */
 
 export const resolver = adminResolver;
@@ -33,6 +37,25 @@ export async function scheduled() {
 
   const { message } = await enqueueRun('schedule');
   console.log(`Плановый прогон (${describeDue(schedule.due)}): ${message}`);
+}
+
+/**
+ * Возврат из Slack. Обработчик разбирает запрос сам (в том числе отказ на экране
+ * согласия) и всегда отвечает страницей — падать здесь нельзя: платформа показала
+ * бы администратору голую ошибку веб-триггера вместо объяснения.
+ */
+export async function slackOAuthCallback(request) {
+  try {
+    return await handleSlackOAuthCallback(request);
+  } catch (e) {
+    console.error(`Колбэк Slack упал: ${e.stack ?? e.message}`);
+    return {
+      statusCode: 500,
+      statusText: 'Error',
+      headers: { 'Content-Type': ['text/plain; charset=utf-8'], 'Cache-Control': ['no-store'] },
+      body: `Slack was not connected: ${e.message}`,
+    };
+  }
 }
 
 /**

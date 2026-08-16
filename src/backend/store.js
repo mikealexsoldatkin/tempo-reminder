@@ -16,6 +16,11 @@ const KEY = {
   lastReport: 'last-run-report',
   scheduleState: 'schedule-state',
   holidays: 'holidays',
+  // Чем подключён Slack (кнопкой или вставленным токеном), к какому workspace и
+  // жив ли ещё токен. Сам токен — в секретном ключе slackBotToken.
+  slackConnection: 'slack-connection',
+  // Начатое, но не законченное подключение по OAuth: одноразовый nonce и срок.
+  slackConnect: 'slack-connect-pending',
 };
 
 // Прежде отслеживаемые и детально отслеживаемые жили двумя независимыми списками.
@@ -522,7 +527,13 @@ function calendarIdOf(icsUrl) {
   return decodeURIComponent(id).split('@')[0].slice(0, 40);
 }
 
-export async function saveCredential(name, value) {
+/**
+ * @param name имя секрета из SECRET_KEY
+ * @param value само значение
+ * @param {object|null} connection только для slackBotToken: чем именно подключён
+ *   Slack. Не передали — значит токен вставили руками в форму.
+ */
+export async function saveCredential(name, value, connection = null) {
   const secretKey = SECRET_KEY[name];
   if (!secretKey) throw new Error(`Unknown token: ${name}`);
   const trimmed = String(value ?? '').trim();
@@ -532,6 +543,12 @@ export async function saveCredential(name, value) {
   const meta = (await kvs.get(KEY.credentialsMeta)) ?? {};
   meta[name] = { updatedAt: new Date().toISOString() };
   await kvs.set(KEY.credentialsMeta, meta);
+
+  // Описание подключения пишется здесь же, а не у вызывающего: разойтись с
+  // токеном оно не должно ни на одном из путей — ни у кнопки, ни у формы.
+  if (name === 'slackBotToken') {
+    await setSlackConnection(connection ?? { method: 'token' });
+  }
 }
 
 export async function clearCredential(name) {
@@ -541,6 +558,72 @@ export async function clearCredential(name) {
   const meta = (await kvs.get(KEY.credentialsMeta)) ?? {};
   delete meta[name];
   await kvs.set(KEY.credentialsMeta, meta);
+  if (name === 'slackBotToken') await kvs.delete(KEY.slackConnection);
+}
+
+/* --------------------------- подключение Slack --------------------------- */
+
+/**
+ * Что известно о подключении Slack помимо самого токена: как он появился
+ * (`oauth` — кнопкой, `token` — вставлен руками), в каком workspace живёт бот и
+ * не отозвали ли токен на той стороне.
+ *
+ * Хранится отдельно от credentials-meta, потому что это не «когда обновляли
+ * поле», а состояние связи с внешней системой: по нему страница настроек
+ * решает, показывать кнопку «Connect Slack» или уже подключённый workspace.
+ */
+export async function getSlackConnection() {
+  return (await kvs.get(KEY.slackConnection)) ?? null;
+}
+
+export async function setSlackConnection(connection) {
+  const next = { ...connection, connectedAt: connection.connectedAt ?? new Date().toISOString() };
+  await kvs.set(KEY.slackConnection, next);
+  return next;
+}
+
+/**
+ * Пометка «токен на той стороне больше не работает»: приложение удалили из
+ * workspace или отозвали токен. Событий Slack приложение не слушает — для этого
+ * нужен постоянно доступный сервер, — поэтому узнаёт об этом только на прогоне,
+ * по коду ошибки. Без пометки администратор видел бы «подключено к Acme Corp» и
+ * молчащую рассылку одновременно.
+ *
+ * Повторная пометка ничего не переписывает: в сломанном прогоне на эту ветку
+ * приходит каждый получатель.
+ */
+export async function markSlackConnectionRevoked(error) {
+  // Записи может не быть вовсе — у установок, где токен вставили руками ещё до
+  // появления кнопки. Пометить такое подключение разорванным нужно ровно так же.
+  const connection = (await getSlackConnection()) ?? { method: 'token' };
+  if (connection.revokedError) return connection;
+  const next = { ...connection, revokedError: String(error), revokedAt: new Date().toISOString() };
+  await kvs.set(KEY.slackConnection, next);
+  console.warn(`Slack-подключение помечено разорванным: ${error}`);
+  return next;
+}
+
+/**
+ * Начатое подключение по OAuth. Хранится ровно одно: если два администратора
+ * нажмут кнопку одновременно, закончить сможет тот, кто нажал последним —
+ * второму страница скажет начать заново. Заводить очередь ради этого не стоит.
+ */
+export async function startPendingSlackConnect(pending) {
+  await kvs.set(KEY.slackConnect, pending);
+  return pending;
+}
+
+export async function getPendingSlackConnect() {
+  return (await kvs.get(KEY.slackConnect)) ?? null;
+}
+
+/**
+ * Гасит начатое подключение. Отдельно от чтения намеренно: чтение с удалением
+ * позволило бы любому, кто знает адрес веб-триггера, обрывать чужие подключения
+ * пустым запросом — гасим только то, чей nonce сошёлся.
+ */
+export async function clearPendingSlackConnect() {
+  await kvs.delete(KEY.slackConnect);
 }
 
 /* --------------------------- статус прогона --------------------------- */

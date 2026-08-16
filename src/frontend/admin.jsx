@@ -34,6 +34,15 @@ const AdminPage = () => {
   const patch = useCallback((changes) => setState((prev) => ({ ...prev, ...changes })), []);
   const onUsersChange = useCallback((trackedUsers) => patch({ trackedUsers }), [patch]);
   const onManagersChange = useCallback((managers) => patch({ managers }), [patch]);
+  // Резолверы доступов отвечают целиком {credentials, slack}: подключение Slack
+  // и наличие его токена меняются вместе, и разъезжаться им нельзя. Берём из
+  // ответа только известные ключи — в нём приезжает и то, что состоянием
+  // страницы не является (результат отзыва токена, например).
+  const onCredentialsChange = useCallback(
+    ({ credentials, slack }) =>
+      setState((prev) => ({ ...prev, credentials, slack: slack ?? prev.slack })),
+    []
+  );
 
   const trackedIds = useMemo(
     () => new Set((state?.trackedUsers ?? []).map((u) => u.accountId)),
@@ -77,6 +86,7 @@ const AdminPage = () => {
       <ReadinessBanner
         settings={state.settings}
         credentials={state.credentials}
+        slack={state.slack}
         trackedUsers={state.trackedUsers}
         managers={state.managers}
       />
@@ -85,7 +95,9 @@ const AdminPage = () => {
           заводить людей, без людей — крутить параметры проверки. */}
       <Tabs id="tempo-reminder-tabs">
         <TabList>
-          <Tab>Access tokens</Tab>
+          {/* Не «Access tokens»: токен здесь остался только у Tempo, Slack
+              подключается кнопкой. */}
+          <Tab>Access</Tab>
           <Tab>Users</Tab>
           <Tab>Check parameters</Tab>
           <Tab>Holidays</Tab>
@@ -97,7 +109,8 @@ const AdminPage = () => {
           <Box paddingBlockStart="space.200">
             <CredentialsTab
               credentials={state.credentials}
-              onCredentialsChange={(credentials) => patch({ credentials })}
+              slack={state.slack}
+              onCredentialsChange={onCredentialsChange}
             />
           </Box>
         </TabPanel>
@@ -172,7 +185,7 @@ const AdminPage = () => {
               settings={state.settings}
               credentials={state.credentials}
               onSettingsChange={(settings) => patch({ settings })}
-              onCredentialsChange={(credentials) => patch({ credentials })}
+              onCredentialsChange={onCredentialsChange}
             />
           </Box>
         </TabPanel>

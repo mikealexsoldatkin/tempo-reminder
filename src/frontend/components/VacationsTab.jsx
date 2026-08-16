@@ -57,7 +57,7 @@ export const VacationsTab = ({ settings, credentials, onSettingsChange, onCreden
     if (icsUrl.trim().length === 0) return undefined;
     return withBusy('save', async () => {
       const result = await api.saveCredential('vacationIcsUrl', icsUrl);
-      onCredentialsChange(result.credentials);
+      onCredentialsChange(result);
       setIcsUrl('');
       setTest(null);
       setMessage({ appearance: 'success', text: 'iCal address saved' });
@@ -67,7 +67,7 @@ export const VacationsTab = ({ settings, credentials, onSettingsChange, onCreden
   const clear = async () => {
     await withBusy('clear', async () => {
       const result = await api.clearCredential('vacationIcsUrl');
-      onCredentialsChange(result.credentials);
+      onCredentialsChange(result);
       setTest(null);
       setMessage({ appearance: 'information', text: 'iCal address removed' });
     });

@@ -1,199 +1,105 @@
-import React, { useState } from 'react';
-import {
-  Box,
-  Form,
-  Heading,
-  HelperMessage,
-  Inline,
-  Label,
-  LoadingButton,
-  Lozenge,
-  SectionMessage,
-  Stack,
-  Text,
-  Textfield,
-} from '@forge/react';
+import React, { useCallback, useState } from 'react';
+import { Heading, Inline, LoadingButton, SectionMessage, Stack, Text } from '@forge/react';
 import { api } from '../api';
-import { formatInstant } from '../formatTime';
-import { ConfirmDialog } from './ConfirmDialog';
+import { SlackConnection } from './SlackConnection';
+import { TokenField } from './TokenField';
 import { useTransientMessage } from './useTransientMessage';
 
-const CREDENTIALS = [
-  {
-    name: 'tempoToken',
-    title: 'Tempo API token',
-    hint: 'Tempo → Settings → API integration → New token. Needs read access to worklogs.',
-  },
-  {
-    name: 'slackBotToken',
-    title: 'Slack bot token (xoxb-…)',
-    hint: 'Scopes: users:read, users:read.email, chat:write, im:write.',
-  },
-];
-
 /**
- * Токены хранятся в секретном хранилище Forge (kvs.setSecret) и наружу не отдаются:
- * UI видит только «задан / не задан», последние 4 символа и дату обновления.
+ * Доступы к двум внешним системам. Устроены они по-разному, и вкладка это
+ * показывает: Slack подключается кнопкой (приложение само получает bot-токен по
+ * OAuth), у Tempo подключения по кнопке нет — там администратор выпускает токен
+ * в настройках Tempo и вставляет его сюда.
+ *
+ * Что бы ни было источником, значение уезжает в секретное хранилище Forge
+ * (kvs.setSecret) и наружу не возвращается: UI видит только «задан / не задан»,
+ * последние 4 символа и дату обновления.
  */
-export const CredentialsTab = ({ credentials, onCredentialsChange }) => {
-  const [inputs, setInputs] = useState({ tempoToken: '', slackBotToken: '' });
-  const [busy, setBusy] = useState(null);
+export const CredentialsTab = ({ credentials, slack, onCredentialsChange }) => {
+  const [isTesting, setTesting] = useState(false);
   // Сообщения об успехе гаснут сами: «Token saved» под формой — это отчёт о
-  // нажатии кнопки, а не признак того, что с токеном сейчас всё хорошо. Про
-  // текущее состояние говорит лозенг у поля, и он никуда не денется.
+  // нажатии кнопки, а не признак того, что с доступом сейчас всё хорошо. Про
+  // текущее состояние говорят лозенг и раздел Slack, и они никуда не денутся.
   const [message, setMessage] = useTransientMessage();
   const [testResults, setTestResults] = useState(null);
-  // Токен из секретного хранилища не читается — «Remove» стирает единственный
-  // экземпляр значения, и восстановить его можно только сходив за новым в Tempo
-  // или Slack. Поэтому спрашиваем.
-  const [pendingClear, setPendingClear] = useState(null);
 
-  const withBusy = async (key, action) => {
-    setBusy(key);
+  // Резолверы доступов отвечают целиком {credentials, slack}: подключение Slack
+  // и наличие токена меняются вместе, и разъезжаться в состоянии страницы им
+  // нельзя. Ссылка стабильна — на неё завязан опрос в SlackConnection.
+  const onResult = useCallback(
+    (result) => {
+      onCredentialsChange(result);
+      setTestResults(null);
+    },
+    [onCredentialsChange]
+  );
+
+  const test = async () => {
+    setTesting(true);
     setMessage(null);
     try {
-      await action();
+      setTestResults(await api.testConnections());
     } catch (e) {
       setMessage({ appearance: 'error', text: e.message });
     } finally {
-      setBusy(null);
+      setTesting(false);
     }
   };
 
-  // Пустое поле «сохранить» не значит ничего: кнопка в этом случае заблокирована,
-  // а Enter в пустом поле форму всё же отправляет — его и отсекаем.
-  const save = (name) => {
-    if (inputs[name].trim().length === 0) return undefined;
-    return withBusy(`save:${name}`, async () => {
-      const result = await api.saveCredential(name, inputs[name]);
-      onCredentialsChange(result.credentials);
-      setInputs((prev) => ({ ...prev, [name]: '' }));
-      setMessage({ appearance: 'success', text: 'Token saved' });
-      setTestResults(null);
-    });
-  };
-
-  const clear = async (name) => {
-    await withBusy(`clear:${name}`, async () => {
-      const result = await api.clearCredential(name);
-      onCredentialsChange(result.credentials);
-      setMessage({ appearance: 'information', text: 'Token removed' });
-      setTestResults(null);
-    });
-    setPendingClear(null);
-  };
-
-  const test = () =>
-    withBusy('test', async () => {
-      setTestResults(await api.testConnections());
-    });
-
   return (
-    <Stack space="space.150">
-      <Heading as="h3" size="medium">Access tokens</Heading>
-      <Text>
-        The app uses no environment variables: both Tempo and Slack authenticate with the tokens
-        from this form. Values are kept in Forge secret storage and are never returned to the UI.
-      </Text>
+    <Stack space="space.300">
+      <Stack space="space.150">
+        <Heading as="h3" size="medium">Access</Heading>
+        <Text>
+          The app talks to Slack and Tempo on its own schedule, so it needs its own access to both.
+          Slack is connected with a button; the Tempo token you issue in Tempo and paste here.
+        </Text>
+      </Stack>
 
-      {CREDENTIALS.map(({ name, title, hint }) => {
-        const status = credentials[name] ?? { isSet: false };
-        return (
-          <Box key={name}>
-            <Stack space="space.100">
-              <Inline space="space.100" alignBlock="center">
-                <Label labelFor={`credential-${name}`}>{title}</Label>
-                {status.isSet ? (
-                  <Lozenge appearance="success">set {status.maskedTail}</Lozenge>
-                ) : (
-                  <Lozenge appearance="removed">not set</Lozenge>
-                )}
-              </Inline>
-              {/* Форма ради Enter: Textfield в UI Kit не принимает onKeyDown, и
-                  вставленный в поле токен иначе не сохранить, не целясь в кнопку. */}
-              <Form onSubmit={() => save(name)}>
-                <Inline space="space.100" alignBlock="end">
-                  <Textfield
-                    id={`credential-${name}`}
-                    type="password"
-                    width={340}
-                    value={inputs[name]}
-                    placeholder={
-                      status.isSet ? 'Enter a new value to replace it' : 'Paste the token'
-                    }
-                    onChange={(e) => setInputs((prev) => ({ ...prev, [name]: e.target.value }))}
-                  />
-                  <LoadingButton
-                    appearance="primary"
-                    type="submit"
-                    isLoading={busy === `save:${name}`}
-                    isDisabled={inputs[name].trim().length === 0}
-                  >
-                    Save
-                  </LoadingButton>
-                  {/* type="button" обязателен: внутри формы кнопка по умолчанию
-                      отправляет её, и «Remove» сохранял бы токен. */}
-                  <LoadingButton
-                    appearance="subtle"
-                    type="button"
-                    isLoading={busy === `clear:${name}`}
-                    isDisabled={!status.isSet}
-                    onClick={() => setPendingClear({ name, title })}
-                  >
-                    Remove
-                  </LoadingButton>
-                </Inline>
-              </Form>
-              <HelperMessage>
-                {hint}
-                {status.updatedAt ? ` Updated: ${formatInstant(status.updatedAt)}.` : ''}
-              </HelperMessage>
-            </Stack>
-          </Box>
-        );
-      })}
+      <SlackConnection
+        slack={slack}
+        credentials={credentials}
+        onResult={onResult}
+        onMessage={setMessage}
+      />
 
-      <Inline space="space.100">
-        <LoadingButton isLoading={busy === 'test'} onClick={test}>
-          Test connection
-        </LoadingButton>
-      </Inline>
+      <Stack space="space.150">
+        <Heading as="h4" size="small">Tempo</Heading>
+        <TokenField
+          name="tempoToken"
+          title="Tempo API token"
+          hint="Tempo → Settings → API integration → New token. Needs read access to worklogs."
+          status={credentials.tempoToken ?? { isSet: false }}
+          onResult={onResult}
+          onMessage={setMessage}
+          removeWarning="Until a new token is set, every run fails on the Tempo side: no worklogs are read, so nobody can be checked."
+        />
+      </Stack>
 
-      {testResults && (
-        <Stack space="space.100">
-          <SectionMessage appearance={testResults.tempo.ok ? 'success' : 'error'}>
-            <Text>Tempo: {testResults.tempo.message}</Text>
+      <Stack space="space.150">
+        <Inline space="space.100">
+          <LoadingButton isLoading={isTesting} onClick={test}>
+            Test connection
+          </LoadingButton>
+        </Inline>
+
+        {testResults && (
+          <Stack space="space.100">
+            <SectionMessage appearance={testResults.tempo.ok ? 'success' : 'error'}>
+              <Text>Tempo: {testResults.tempo.message}</Text>
+            </SectionMessage>
+            <SectionMessage appearance={testResults.slack.ok ? 'success' : 'error'}>
+              <Text>Slack: {testResults.slack.message}</Text>
+            </SectionMessage>
+          </Stack>
+        )}
+
+        {message && (
+          <SectionMessage appearance={message.appearance}>
+            <Text>{message.text}</Text>
           </SectionMessage>
-          <SectionMessage appearance={testResults.slack.ok ? 'success' : 'error'}>
-            <Text>Slack: {testResults.slack.message}</Text>
-          </SectionMessage>
-        </Stack>
-      )}
-
-      {message && (
-        <SectionMessage appearance={message.appearance}>
-          <Text>{message.text}</Text>
-        </SectionMessage>
-      )}
-
-      <ConfirmDialog
-        isOpen={pendingClear !== null}
-        title="Remove the token?"
-        confirmLabel="Remove token"
-        isBusy={busy === `clear:${pendingClear?.name}`}
-        onConfirm={() => clear(pendingClear.name)}
-        onCancel={() => setPendingClear(null)}
-      >
-        <Stack space="space.100">
-          <Text>
-            The {pendingClear?.title} will be deleted from Forge secret storage. The app never reads
-            it back, so nothing here can restore it — you would have to issue a new one.
-          </Text>
-          <Text>
-            Until then every run fails on that side: no worklogs are read, or nothing is delivered.
-          </Text>
-        </Stack>
-      </ConfirmDialog>
+        )}
+      </Stack>
     </Stack>
   );
 };
