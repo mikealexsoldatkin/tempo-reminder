@@ -368,6 +368,8 @@ export async function setTrackedUserCalendarName(accountId, calendarName) {
  * отчитался», `detailedManagerIds` — кому уйдёт разбор worklog'ов по дням.
  * Механика одна, поэтому поле приходит параметром.
  *
+ * @param accountId
+ * @param managerIds
  * @param {'managerIds'|'detailedManagerIds'} field
  */
 async function assignManagers(field, accountId, managerIds) {
