@@ -23,12 +23,22 @@ modules:
   # поэтому браузер приходит сюда не напрямую, а со статической страницы —
   # см. src/backend/slackOAuth.js и docs/slack-callback/index.html.
   # Ответ dynamic: на странице «готово» называется подключённый workspace.
+  # Возврат из Tempo при подключении по OAuth. Здесь, в отличие от Slack,
+  # промежуточной страницы нет: Tempo возвращает на redirect_uri только `code`,
+  # без `state`, — переслать его дальше такой странице было бы некуда. Поэтому
+  # адрес этого веб-триггера вписывается прямо в OAuth-приложение Tempo при
+  # развёртывании (см. src/backend/tempoOAuth.js и README).
   webtrigger:
     - key: slack-oauth-callback
       # Ключ функции отличается от ключа вебтриггера: ключи модулей уникальны на
       # весь манифест, а «slack-oauth-callback» занят самим вебтриггером — именно
       # его спрашивает webTrigger.getUrl() в src/backend/slackOAuth.js.
       function: slack-oauth
+      urlFormat: v2
+      response:
+        type: dynamic
+    - key: tempo-oauth-callback
+      function: tempo-oauth
       urlFormat: v2
       response:
         type: dynamic
@@ -41,6 +51,8 @@ modules:
       handler: index.runConsumer
     - key: slack-oauth
       handler: index.slackOAuthCallback
+    - key: tempo-oauth
+      handler: index.tempoOAuthCallback
 resources:
   - key: admin-page
     path: src/frontend/admin.jsx

@@ -18,6 +18,7 @@ import {
 import { api } from '../api';
 import { formatInstant } from '../formatTime';
 import { ConfirmDialog } from './ConfirmDialog';
+import { Panel, TabHeader } from './layout';
 import { useTransientMessage } from './useTransientMessage';
 
 /**
@@ -86,14 +87,19 @@ export const VacationsTab = ({ settings, credentials, onSettingsChange, onCreden
     });
 
   return (
-    <Stack space="space.300">
-      <Stack space="space.100">
-        <Heading as="h3" size="medium">Vacations</Heading>
-        <Text>
-          A day covered by a vacation is not a debt: it is removed from the person’s missing days, so
-          neither they nor their manager is asked about it. If a vacation covers every day the app
-          would have asked about, nothing is sent at all.
-        </Text>
+    <Stack space="space.200">
+      <TabHeader
+        title="Vacations"
+        description="A day covered by a vacation is not a debt: it is removed from the person’s missing days, so neither they nor their manager is asked about it. If a vacation covers every day the app would have asked about, nothing is sent at all."
+        message={message}
+        actions={
+          <LoadingButton isLoading={busy === 'test'} isDisabled={!status.isSet} onClick={runTest}>
+            Test calendar
+          </LoadingButton>
+        }
+      />
+
+      <Panel title="When vacations are taken into account">
         <Checkbox
           isChecked={settings.skipVacations}
           isDisabled={busy !== null}
@@ -110,18 +116,18 @@ export const VacationsTab = ({ settings, credentials, onSettingsChange, onCreden
           Both switches are saved right away. The second one only holds back the DM — the person
           still appears in their manager’s digest, so the days aren’t forgotten.
         </HelperMessage>
-      </Stack>
 
-      {settings.skipVacations && !status.isSet && (
-        <SectionMessage appearance="warning">
-          <Text>
-            The vacation calendar is on, but no iCal address is set — runs will ignore vacations and
-            say so in the report.
-          </Text>
-        </SectionMessage>
-      )}
+        {settings.skipVacations && !status.isSet && (
+          <SectionMessage appearance="warning">
+            <Text>
+              The vacation calendar is on, but no iCal address is set — runs will ignore vacations
+              and say so in the report.
+            </Text>
+          </SectionMessage>
+        )}
+      </Panel>
 
-      <Stack space="space.100">
+      <Panel title="Calendar link">
         <Inline space="space.100" alignBlock="center">
           <Label labelFor="vacation-ics-url">Secret address in iCal format</Label>
           {status.isSet ? (
@@ -168,26 +174,17 @@ export const VacationsTab = ({ settings, credentials, onSettingsChange, onCreden
           vacation entered a few minutes ago may take a while to appear here.
           {status.updatedAt ? ` Updated: ${formatInstant(status.updatedAt)}.` : ''}
         </HelperMessage>
-      </Stack>
-
-      <Stack space="space.150">
-        <Inline space="space.100">
-          <LoadingButton isLoading={busy === 'test'} isDisabled={!status.isSet} onClick={runTest}>
-            Test connection
-          </LoadingButton>
-        </Inline>
         <HelperMessage>
-          The test also shows how event titles map onto the tracked users: an employee written
-          differently in the calendar than in Jira shows up here as “no match”, and the fix is the
-          “Name in the vacation calendar” column on the Users tab.
+          “Test calendar” in the header also shows how event titles map onto the tracked users: an
+          employee written differently in the calendar than in Jira shows up as “no match”, and the
+          fix is the “Name in the vacation calendar” column on the Users tab.
         </HelperMessage>
-        {test && <TestResult test={test} />}
-      </Stack>
+      </Panel>
 
-      {message && (
-        <SectionMessage appearance={message.appearance}>
-          <Text>{message.text}</Text>
-        </SectionMessage>
+      {test && (
+        <Panel title="What the calendar returns">
+          <TestResult test={test} />
+        </Panel>
       )}
 
       <ConfirmDialog

@@ -1,31 +1,38 @@
 import React, { useCallback, useState } from 'react';
-import { Heading, Inline, LoadingButton, SectionMessage, Stack, Text } from '@forge/react';
+import { Inline, LoadingButton, Stack } from '@forge/react';
 import { api } from '../api';
 import { SlackConnection } from './SlackConnection';
-import { TokenField } from './TokenField';
+import { TempoConnection } from './TempoConnection';
+import { PanelColumn, TabHeader } from './layout';
 import { useTransientMessage } from './useTransientMessage';
 
 /**
- * Доступы к двум внешним системам. Устроены они по-разному, и вкладка это
- * показывает: Slack подключается кнопкой (приложение само получает bot-токен по
- * OAuth), у Tempo подключения по кнопке нет — там администратор выпускает токен
- * в настройках Tempo и вставляет его сюда.
+ * Подключения к двум внешним системам. Обе подключаются кнопкой: приложение само
+ * получает токен по OAuth и кладёт его в секретное хранилище. Полей для ручного
+ * ввода на вкладке нет ни у одной — токены, вставленные в прежних версиях,
+ * продолжают работать и заменяются тем же нажатием кнопки.
  *
- * Что бы ни было источником, значение уезжает в секретное хранилище Forge
- * (kvs.setSecret) и наружу не возвращается: UI видит только «задан / не задан»,
- * последние 4 символа и дату обновления.
+ * Значение уезжает в секретное хранилище Forge (kvs.setSecret) и наружу не
+ * возвращается: UI видит только «задан / не задан», последние 4 символа и дату
+ * обновления.
+ *
+ * Раскладка: шапка с общей проверкой, под ней две равные панели — Slack и Tempo.
+ * В столбик они читались как один длинный список, в котором лозенг одной системы
+ * стоит вплотную к кнопке другой; рядом же видно главное — работают обе или нет.
+ * Итог проверки уезжает в панель той системы, к которой относится: возвращать его
+ * к кнопке значило бы заставлять глаз ходить туда-сюда.
  */
-export const CredentialsTab = ({ credentials, slack, onCredentialsChange }) => {
+export const CredentialsTab = ({ credentials, slack, tempo, onCredentialsChange }) => {
   const [isTesting, setTesting] = useState(false);
-  // Сообщения об успехе гаснут сами: «Token saved» под формой — это отчёт о
-  // нажатии кнопки, а не признак того, что с доступом сейчас всё хорошо. Про
-  // текущее состояние говорят лозенг и раздел Slack, и они никуда не денутся.
+  // Сообщения об успехе гаснут сами: «Tempo is connected» — это отчёт о нажатии
+  // кнопки, а не признак того, что с доступом сейчас всё хорошо. Про текущее
+  // состояние говорят лозенги в панелях, и они никуда не денутся.
   const [message, setMessage] = useTransientMessage();
   const [testResults, setTestResults] = useState(null);
 
-  // Резолверы доступов отвечают целиком {credentials, slack}: подключение Slack
-  // и наличие токена меняются вместе, и разъезжаться в состоянии страницы им
-  // нельзя. Ссылка стабильна — на неё завязан опрос в SlackConnection.
+  // Резолверы доступов отвечают целиком {credentials, slack, tempo}: подключение
+  // и его токен меняются вместе, и разъезжаться в состоянии страницы им нельзя.
+  // Ссылка стабильна — на неё завязан опрос в SlackConnection и TempoConnection.
   const onResult = useCallback(
     (result) => {
       onCredentialsChange(result);
@@ -38,7 +45,11 @@ export const CredentialsTab = ({ credentials, slack, onCredentialsChange }) => {
     setTesting(true);
     setMessage(null);
     try {
-      setTestResults(await api.testConnections());
+      const results = await api.testConnections();
+      setTestResults(results);
+      // Проверка — ещё и способ узнать, что доступ отозвали на той стороне:
+      // резолвер отдаёт вместе с итогами обновлённое состояние подключений.
+      if (results.state) onCredentialsChange(results.state);
     } catch (e) {
       setMessage({ appearance: 'error', text: e.message });
     } finally {
@@ -47,59 +58,38 @@ export const CredentialsTab = ({ credentials, slack, onCredentialsChange }) => {
   };
 
   return (
-    <Stack space="space.300">
-      <Stack space="space.150">
-        <Heading as="h3" size="medium">Access</Heading>
-        <Text>
-          The app talks to Slack and Tempo on its own schedule, so it needs its own access to both.
-          Slack is connected with a button; the Tempo token you issue in Tempo and paste here.
-        </Text>
-      </Stack>
-
-      <SlackConnection
-        slack={slack}
-        credentials={credentials}
-        onResult={onResult}
-        onMessage={setMessage}
+    <Stack space="space.200">
+      <TabHeader
+        title="Connections"
+        description="The app talks to Slack and Tempo on its own schedule, so it needs its own access to both. Each is connected with a button — the app gets the token itself and keeps it alive."
+        message={message}
+        actions={
+          <LoadingButton isLoading={isTesting} onClick={test}>
+            Test connections
+          </LoadingButton>
+        }
       />
 
-      <Stack space="space.150">
-        <Heading as="h4" size="small">Tempo</Heading>
-        <TokenField
-          name="tempoToken"
-          title="Tempo API token"
-          hint="Tempo → Settings → API integration → New token. Needs read access to worklogs."
-          status={credentials.tempoToken ?? { isSet: false }}
-          onResult={onResult}
-          onMessage={setMessage}
-          removeWarning="Until a new token is set, every run fails on the Tempo side: no worklogs are read, so nobody can be checked."
-        />
-      </Stack>
-
-      <Stack space="space.150">
-        <Inline space="space.100">
-          <LoadingButton isLoading={isTesting} onClick={test}>
-            Test connection
-          </LoadingButton>
-        </Inline>
-
-        {testResults && (
-          <Stack space="space.100">
-            <SectionMessage appearance={testResults.tempo.ok ? 'success' : 'error'}>
-              <Text>Tempo: {testResults.tempo.message}</Text>
-            </SectionMessage>
-            <SectionMessage appearance={testResults.slack.ok ? 'success' : 'error'}>
-              <Text>Slack: {testResults.slack.message}</Text>
-            </SectionMessage>
-          </Stack>
-        )}
-
-        {message && (
-          <SectionMessage appearance={message.appearance}>
-            <Text>{message.text}</Text>
-          </SectionMessage>
-        )}
-      </Stack>
+      <Inline space="space.200" alignBlock="stretch" shouldWrap>
+        <PanelColumn>
+          <SlackConnection
+            slack={slack}
+            credentials={credentials}
+            testResult={testResults?.slack}
+            onResult={onResult}
+            onMessage={setMessage}
+          />
+        </PanelColumn>
+        <PanelColumn>
+          <TempoConnection
+            tempo={tempo}
+            credentials={credentials}
+            testResult={testResults?.tempo}
+            onResult={onResult}
+            onMessage={setMessage}
+          />
+        </PanelColumn>
+      </Inline>
     </Stack>
   );
 };

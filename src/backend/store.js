@@ -21,6 +21,10 @@ const KEY = {
   slackConnection: 'slack-connection',
   // Начатое, но не законченное подключение по OAuth: одноразовый nonce и срок.
   slackConnect: 'slack-connect-pending',
+  // То же про Tempo: чем подключён (кнопкой или вставленным токеном), до какого
+  // момента живёт выданный access-токен и не отозвали ли доступ на той стороне.
+  tempoConnection: 'tempo-connection',
+  tempoConnect: 'tempo-connect-pending',
 };
 
 // Прежде отслеживаемые и детально отслеживаемые жили двумя независимыми списками.
@@ -37,6 +41,14 @@ const SECRET_KEY = {
 };
 
 export const CREDENTIAL_NAMES = Object.keys(SECRET_KEY);
+
+/**
+ * Refresh-токен Tempo стоит особняком от SECRET_KEY: тот список — это то, что
+ * администратор задаёт и видит на вкладке «Connections», а refresh появляется и
+ * меняется сам, при каждом обновлении доступа. Показывать его в UI нечего, а
+ * править руками — тем более.
+ */
+const TEMPO_REFRESH_SECRET_KEY = 'tempo-refresh-token';
 
 export const DEFAULT_SETTINGS = {
   // Сколько последних рабочих дней проверяем — время должно быть залогировано
@@ -549,6 +561,13 @@ export async function saveCredential(name, value, connection = null) {
   if (name === 'slackBotToken') {
     await setSlackConnection(connection ?? { method: 'token' });
   }
+  if (name === 'tempoToken') {
+    // Токен, вставленный руками, отменяет прежнее подключение по OAuth целиком:
+    // обновлять его нечем и не нужно, а оставшийся refresh продолжал бы каждую
+    // неделю подменять вставленное значение своим.
+    if (!connection) await kvs.deleteSecret(TEMPO_REFRESH_SECRET_KEY);
+    await setTempoConnection(connection ?? { method: 'token' });
+  }
 }
 
 export async function clearCredential(name) {
@@ -559,6 +578,10 @@ export async function clearCredential(name) {
   delete meta[name];
   await kvs.set(KEY.credentialsMeta, meta);
   if (name === 'slackBotToken') await kvs.delete(KEY.slackConnection);
+  if (name === 'tempoToken') {
+    await kvs.deleteSecret(TEMPO_REFRESH_SECRET_KEY);
+    await kvs.delete(KEY.tempoConnection);
+  }
 }
 
 /* --------------------------- подключение Slack --------------------------- */
@@ -624,6 +647,83 @@ export async function getPendingSlackConnect() {
  */
 export async function clearPendingSlackConnect() {
   await kvs.delete(KEY.slackConnect);
+}
+
+/* --------------------------- подключение Tempo --------------------------- */
+
+/**
+ * Что известно о доступе к Tempo помимо самого токена: как он появился (`oauth` —
+ * кнопкой, `token` — вставлен руками), кто и когда подключил, до какого момента
+ * живёт выданный access-токен и не отказал ли Tempo в доступе.
+ *
+ * Срок здесь — не украшение: access живёт 60 дней, и без записи о нём приложение
+ * узнавало бы о протухании только по упавшему прогону.
+ */
+export async function getTempoConnection() {
+  return (await kvs.get(KEY.tempoConnection)) ?? null;
+}
+
+export async function setTempoConnection(connection) {
+  const next = { ...connection, connectedAt: connection.connectedAt ?? new Date().toISOString() };
+  await kvs.set(KEY.tempoConnection, next);
+  return next;
+}
+
+/**
+ * Пара «access + refresh», приехавшая от Tempo. Пишется одним вызовом намеренно:
+ * refresh одноразовый — Tempo выдаёт новый на каждое обновление и гасит прежний,
+ * поэтому разъехавшиеся половинки означают мёртвое подключение.
+ */
+export async function saveTempoOAuthTokens({ accessToken, refreshToken, connection }) {
+  await kvs.setSecret(SECRET_KEY.tempoToken, accessToken);
+  if (refreshToken) await kvs.setSecret(TEMPO_REFRESH_SECRET_KEY, refreshToken);
+
+  const meta = (await kvs.get(KEY.credentialsMeta)) ?? {};
+  meta.tempoToken = { updatedAt: new Date().toISOString() };
+  await kvs.set(KEY.credentialsMeta, meta);
+
+  return setTempoConnection(connection);
+}
+
+export async function getTempoRefreshToken() {
+  return (await kvs.getSecret(TEMPO_REFRESH_SECRET_KEY)) ?? null;
+}
+
+/**
+ * Пометка «Tempo больше не принимает этот доступ»: токен отозвали в настройках
+ * Tempo, у подключившего забрали права на чужие worklog'и, обновление не удалось.
+ * Как и у Slack, узнать об этом можно только по ответу на прогоне или проверке.
+ */
+export async function markTempoConnectionBroken(error) {
+  const connection = (await getTempoConnection()) ?? { method: 'token' };
+  if (connection.brokenError) return connection;
+  const next = { ...connection, brokenError: String(error), brokenAt: new Date().toISOString() };
+  await kvs.set(KEY.tempoConnection, next);
+  console.warn(`Подключение Tempo помечено сломанным: ${error}`);
+  return next;
+}
+
+/** Обратное: удачный обмен или проверка снимают пометку, чтобы баннер не врал. */
+export async function clearTempoConnectionError() {
+  const connection = await getTempoConnection();
+  if (!connection?.brokenError) return connection;
+  const { brokenError, brokenAt, ...rest } = connection;
+  await kvs.set(KEY.tempoConnection, rest);
+  return rest;
+}
+
+/** Начатое подключение по OAuth — ровно одно, как и у Slack. */
+export async function startPendingTempoConnect(pending) {
+  await kvs.set(KEY.tempoConnect, pending);
+  return pending;
+}
+
+export async function getPendingTempoConnect() {
+  return (await kvs.get(KEY.tempoConnect)) ?? null;
+}
+
+export async function clearPendingTempoConnect() {
+  await kvs.delete(KEY.tempoConnect);
 }
 
 /* --------------------------- статус прогона --------------------------- */

@@ -4,6 +4,13 @@ import { testTempoToken } from './tempo.js';
 import { testSlackToken } from './slack.js';
 import { disconnectSlack, getSlackStatus, startSlackConnect } from './slackOAuth.js';
 import { isRevokedTokenError } from './slackOAuthState.js';
+import {
+  disconnectTempo,
+  getTempoAccessToken,
+  getTempoStatus,
+  noteTempoCheck,
+  startTempoConnect,
+} from './tempoOAuth.js';
 import { testVacationCalendar } from './vacationCalendar.js';
 import { enqueueRun } from './runQueue.js';
 import { describeSchedule } from './reminder.js';
@@ -59,15 +66,25 @@ function define(key, handler) {
   };
 }
 
+/**
+ * Состояние доступов целиком: у обоих подключений токен и описание подключения
+ * меняются вместе, и разъезжаться в состоянии страницы им нельзя. Поэтому всё,
+ * что трогает доступы, отвечает этой тройкой, а не одной изменённой частью.
+ */
+const accessState = async () => ({
+  credentials: await getCredentialsStatus(),
+  slack: await getSlackStatus(),
+  tempo: await getTempoStatus(),
+});
+
 /** Полное состояние страницы настроек за один вызов. */
 define('getState', async () => {
-  const [settings, trackedUsers, managers, credentials, slack, runStatus, lastReport, holidays] =
+  const [settings, trackedUsers, managers, access, runStatus, lastReport, holidays] =
     await Promise.all([
       getSettings(),
       getTrackedUsers(),
       getManagers(),
-      getCredentialsStatus(),
-      getSlackStatus(),
+      accessState(),
       getRunStatus(),
       getLastReport(),
       getHolidays(),
@@ -76,8 +93,7 @@ define('getState', async () => {
     settings,
     trackedUsers,
     managers,
-    credentials,
-    slack,
+    ...access,
     runStatus,
     lastReport,
     holidays: withDates(holidays),
@@ -149,29 +165,35 @@ define('setManagerEmail', async ({ payload }) => ({
 
 define('saveCredential', async ({ payload }) => {
   await saveCredential(payload?.name, payload?.value);
-  return { credentials: await getCredentialsStatus(), slack: await getSlackStatus() };
+  return accessState();
 });
 
 define('clearCredential', async ({ payload }) => {
   await clearCredential(payload?.name);
-  return { credentials: await getCredentialsStatus(), slack: await getSlackStatus() };
+  return accessState();
 });
 
 define('testConnections', async () => {
-  const { tempoToken, slackBotToken } = await getCredentials();
+  // Токен Tempo берём через getTempoAccessToken: у подключения по кнопке он
+  // может быть на исходе, и проверка — хороший повод продлить его заранее.
+  const [tempoToken, { slackBotToken }] = await Promise.all([getTempoAccessToken(), getCredentials()]);
   const [tempo, slack] = await Promise.all([
     tempoToken
       ? testTempoToken(tempoToken)
-      : Promise.resolve({ ok: false, message: 'Tempo API token is not set' }),
+      : Promise.resolve({ ok: false, message: 'Tempo is not connected' }),
     slackBotToken
       ? testSlackToken(slackBotToken)
       : Promise.resolve({ ok: false, message: 'Slack is not connected' }),
   ]);
-  // Проверка — второе место (после прогона), где видно, что токен на той стороне
+  // Проверка — второе место (после прогона), где видно, что доступ на той стороне
   // отозвали. Молчать об этом здесь значило бы оставить в сводке готовности
   // «подключено» рядом с красной строкой проверки.
   if (isRevokedTokenError(slack.slackError)) await markSlackConnectionRevoked(slack.slackError);
-  return { tempo, slack };
+  await noteTempoCheck(tempo);
+  // Состояние доступов едет отдельным полем, а не вперемешку с итогами проверки:
+  // ключи `tempo` и `slack` заняты самими итогами, и слить их в один объект
+  // значило бы, что подключение и результат его проверки затирают друг друга.
+  return { tempo, slack, state: await accessState() };
 });
 
 /**
@@ -219,7 +241,26 @@ define('getSlackStatus', async () => ({
 
 define('disconnectSlack', async () => {
   const revoked = await disconnectSlack();
-  return { revoked, credentials: await getCredentialsStatus(), slack: await getSlackStatus() };
+  return { revoked, ...(await accessState()) };
+});
+
+/* ----------------------------- подключение Tempo ----------------------------- */
+
+/**
+ * Устроено так же, как у Slack, с одной добавкой: в ссылку на экран согласия
+ * едет адрес этого инстанса Jira — Tempo спрашивает согласие против конкретного
+ * сайта, и узнать его фронтенду неоткуда.
+ */
+define('startTempoConnect', ({ context }) => startTempoConnect(context?.accountId ?? null));
+
+define('getTempoStatus', async () => ({
+  tempo: await getTempoStatus(),
+  credentials: await getCredentialsStatus(),
+}));
+
+define('disconnectTempo', async () => {
+  const revoked = await disconnectTempo();
+  return { revoked, ...(await accessState()) };
 });
 
 /* --------------------------------- прогон --------------------------------- */

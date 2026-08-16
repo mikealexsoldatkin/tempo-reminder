@@ -17,6 +17,7 @@ import { getUserWorklogs, getWorklogDaysByAuthor, sleep } from './tempo.js';
 import { getIssues } from './jira.js';
 import { lookupSlackUserByEmail, sendSlackDm } from './slack.js';
 import { isRevokedTokenError } from './slackOAuthState.js';
+import { getTempoAccessToken, noteTempoCheck } from './tempoOAuth.js';
 import { daysToReport, isWeekend, lastWorkingDays, windowOf } from './workdays.js';
 import {
   CATCH_UP_MINUTES,
@@ -179,9 +180,15 @@ export async function runReminderCheck({ trigger, requestedBy = null, now = new 
     }, schedule);
   }
 
-  const { tempoToken, slackBotToken, vacationIcsUrl } = await getCredentials();
+  // Токен Tempo спрашиваем не у хранилища напрямую, а у подключения: у доступа,
+  // полученного кнопкой, срок конечен, и продлить его нужно до первого запроса —
+  // на середине рассылки 401 стоил бы уже разосланных сообщений.
+  const [tempoToken, { slackBotToken, vacationIcsUrl }] = await Promise.all([
+    getTempoAccessToken(),
+    getCredentials(),
+  ]);
   const missing = [
-    !tempoToken && 'Tempo API token',
+    !tempoToken && 'Tempo access',
     !slackBotToken && 'Slack bot token',
   ].filter(Boolean);
   if (missing.length > 0) {
@@ -225,6 +232,10 @@ export async function runReminderCheck({ trigger, requestedBy = null, now = new 
     try {
       daysByAuthor = await getWorklogDaysByAuthor(fetchRange.from, fetchRange.to, tempoToken);
     } catch (e) {
+      // Отказ в доступе — это не «Tempo сегодня не отвечает», а «подключение
+      // больше не работает»: помечаем его, чтобы страница настроек звала
+      // подключиться заново, а не показывала зелёный лозенг над мёртвой рассылкой.
+      await noteTempoCheck({ ok: false, message: e.message });
       return finish({
         trigger,
         requestedBy,

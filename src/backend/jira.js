@@ -314,6 +314,25 @@ export async function isJiraAdmin() {
   return Boolean(data?.permissions?.ADMINISTER?.havePermission);
 }
 
+/**
+ * Адрес этого инстанса Jira — его требует экран согласия Tempo (`jira_url`):
+ * согласие даётся не «вообще», а против конкретного сайта.
+ *
+ * Спрашиваем Jira, а не собираем из контекста резолвера: в UI Kit контекст
+ * гарантирует только cloudId, а Tempo нужен именно человеческий адрес, и он же
+ * меняется, если организация переезжает на собственный домен.
+ */
+export async function getJiraBaseUrl() {
+  const res = await api
+    .asApp()
+    .requestJira(route`/rest/api/3/serverInfo`, { headers: { Accept: 'application/json' } });
+  if (!res.ok) throw new Error(await jiraError(res, 'server info'));
+
+  const baseUrl = (await res.json())?.baseUrl;
+  if (!baseUrl) throw new Error('Jira did not return the address of this site');
+  return String(baseUrl).replace(/\/+$/, '');
+}
+
 function isRealUser(user) {
   // Отсекаем ботов и app-пользователей, а также деактивированные аккаунты.
   return user?.accountId && user.active !== false && (!user.accountType || user.accountType === 'atlassian');

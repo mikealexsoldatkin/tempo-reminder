@@ -4,7 +4,6 @@ import {
   Button,
   Checkbox,
   DynamicTable,
-  Heading,
   HelperMessage,
   Inline,
   Label,
@@ -25,6 +24,7 @@ import {
 } from '@forge/react';
 import { api } from '../api';
 import { ConfirmDialog } from './ConfirmDialog';
+import { Panel, TabHeader } from './layout';
 import { useTransientMessage } from './useTransientMessage';
 
 // Select своей ширины не имеет и растягивается по родителю — задаём её обёрткой.
@@ -229,9 +229,14 @@ export const HolidaysTab = ({ holidays, settings, onHolidaysChange, onSettingsCh
   }));
 
   return (
-    <Stack space="space.300">
-      <Stack space="space.100">
-        <Heading as="h3" size="medium">Non-working days</Heading>
+    <Stack space="space.200">
+      <TabHeader
+        title="Non-working days"
+        description="A holiday is not a working day: nobody has to log time for it, and the scheduled check is skipped on it. Holidays are stored as rules, so “last Monday of May” stays correct next year too."
+        message={message}
+      />
+
+      <Panel title="What counts as a day off">
         <Checkbox
           isChecked={settings.skipWeekends}
           isDisabled={isBusy}
@@ -248,16 +253,29 @@ export const HolidaysTab = ({ holidays, settings, onHolidaysChange, onSettingsCh
           Both switches are saved right away. With the calendar off the list below changes nothing —
           holidays are then treated as ordinary working days.
         </HelperMessage>
-      </Stack>
+      </Panel>
 
-      <Stack space="space.150">
-        <Heading as="h3" size="medium">Holiday calendar ({holidays.length})</Heading>
-        <Text>
-          A holiday is not a working day: nobody has to log time for it, and the scheduled check is
-          skipped on it. Holidays are stored as rules, so “last Monday of May” stays correct next
-          year too.
-        </Text>
-
+      <Panel
+        title={`Holiday calendar (${holidays.length})`}
+        actions={
+          <>
+            <Button appearance="primary" isDisabled={isBusy} onClick={openAdd}>
+              Add a holiday
+            </Button>
+            <LoadingButton
+              appearance="danger"
+              isLoading={isBusy}
+              isDisabled={selected.size === 0}
+              onClick={() => mutate(() => api.removeHolidays([...selected]), 'Holidays removed')}
+            >
+              Remove selected ({selected.size})
+            </LoadingButton>
+            <LoadingButton appearance="subtle" isLoading={isBusy} onClick={() => setIsResetOpen(true)}>
+              Restore defaults
+            </LoadingButton>
+          </>
+        }
+      >
         {holidays.length === 0 && (
           <SectionMessage appearance="warning">
             <Text>The calendar is empty — only weekends will be skipped.</Text>
@@ -269,28 +287,7 @@ export const HolidaysTab = ({ holidays, settings, onHolidaysChange, onSettingsCh
             <DynamicTable head={head} rows={rows} rowsPerPage={20} isLoading={isBusy} />
           </Box>
         )}
-
-        <Inline space="space.100">
-          <Button appearance="primary" isDisabled={isBusy} onClick={openAdd}>
-            Add a holiday
-          </Button>
-          <LoadingButton
-            appearance="danger"
-            isLoading={isBusy}
-            isDisabled={selected.size === 0}
-            onClick={() => mutate(() => api.removeHolidays([...selected]), 'Holidays removed')}
-          >
-            Remove selected ({selected.size})
-          </LoadingButton>
-          <LoadingButton
-            appearance="subtle"
-            isLoading={isBusy}
-            onClick={() => setIsResetOpen(true)}
-          >
-            Restore defaults
-          </LoadingButton>
-        </Inline>
-      </Stack>
+      </Panel>
 
       <ConfirmDialog
         isOpen={isResetOpen}
@@ -451,12 +448,6 @@ export const HolidaysTab = ({ holidays, settings, onHolidaysChange, onSettingsCh
           </Modal>
         )}
       </ModalTransition>
-
-      {message && (
-        <SectionMessage appearance={message.appearance}>
-          <Text>{message.text}</Text>
-        </SectionMessage>
-      )}
     </Stack>
   );
 };

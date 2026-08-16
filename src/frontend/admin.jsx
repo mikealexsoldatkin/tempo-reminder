@@ -22,6 +22,7 @@ import { VacationsTab } from './components/VacationsTab';
 import { RunTab } from './components/RunTab';
 import { ReadinessBanner } from './components/ReadinessBanner';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { Panel } from './components/layout';
 
 const AdminPage = () => {
   const [state, setState] = useState(null);
@@ -34,13 +35,18 @@ const AdminPage = () => {
   const patch = useCallback((changes) => setState((prev) => ({ ...prev, ...changes })), []);
   const onUsersChange = useCallback((trackedUsers) => patch({ trackedUsers }), [patch]);
   const onManagersChange = useCallback((managers) => patch({ managers }), [patch]);
-  // Резолверы доступов отвечают целиком {credentials, slack}: подключение Slack
-  // и наличие его токена меняются вместе, и разъезжаться им нельзя. Берём из
-  // ответа только известные ключи — в нём приезжает и то, что состоянием
-  // страницы не является (результат отзыва токена, например).
+  // Резолверы доступов отвечают целиком {credentials, slack, tempo}: подключение
+  // и его токен меняются вместе, и разъезжаться им нельзя. Берём из ответа только
+  // известные ключи — в нём приезжает и то, что состоянием страницы не является
+  // (результат отзыва токена, например).
   const onCredentialsChange = useCallback(
-    ({ credentials, slack }) =>
-      setState((prev) => ({ ...prev, credentials, slack: slack ?? prev.slack })),
+    ({ credentials, slack, tempo }) =>
+      setState((prev) => ({
+        ...prev,
+        credentials: credentials ?? prev.credentials,
+        slack: slack ?? prev.slack,
+        tempo: tempo ?? prev.tempo,
+      })),
     []
   );
 
@@ -87,6 +93,7 @@ const AdminPage = () => {
         settings={state.settings}
         credentials={state.credentials}
         slack={state.slack}
+        tempo={state.tempo}
         trackedUsers={state.trackedUsers}
         managers={state.managers}
       />
@@ -95,9 +102,9 @@ const AdminPage = () => {
           заводить людей, без людей — крутить параметры проверки. */}
       <Tabs id="tempo-reminder-tabs">
         <TabList>
-          {/* Не «Access tokens»: токен здесь остался только у Tempo, Slack
-              подключается кнопкой. */}
-          <Tab>Access</Tab>
+          {/* Не «Access tokens» и не «Access»: токенов на вкладке больше нет
+              вовсе — обе системы подключаются кнопкой. */}
+          <Tab>Connections</Tab>
           <Tab>Users</Tab>
           <Tab>Check parameters</Tab>
           <Tab>Holidays</Tab>
@@ -110,6 +117,7 @@ const AdminPage = () => {
             <CredentialsTab
               credentials={state.credentials}
               slack={state.slack}
+              tempo={state.tempo}
               onCredentialsChange={onCredentialsChange}
             />
           </Box>
@@ -123,37 +131,43 @@ const AdminPage = () => {
                 «Remove selected». Каждая таблица пополняется только собой: в
                 менеджеры добавляют поиском по имени, под наблюдение — ещё и целым
                 проектом. */}
-            <Stack space="space.400">
+            <Stack space="space.200">
               {/* Менеджеры идут первыми: колонки в Tracked users выбирают из этого
-                  списка, и пустой он делает их нередактируемыми. */}
-              <ManagersTable
-                managers={state.managers}
-                onManagersChange={onManagersChange}
-                onUsersChange={onUsersChange}
-                addActions={
-                  <AddPeopleActions
-                    action="manager"
-                    trackedIds={trackedIds}
-                    managerIds={managerIds}
-                    onUsersChange={onUsersChange}
-                    onManagersChange={onManagersChange}
-                  />
-                }
-              />
-              <TrackedUsersTable
-                users={state.trackedUsers}
-                managers={state.managers}
-                onUsersChange={onUsersChange}
-                addActions={
-                  <AddPeopleActions
-                    action="track"
-                    trackedIds={trackedIds}
-                    managerIds={managerIds}
-                    onUsersChange={onUsersChange}
-                    onManagersChange={onManagersChange}
-                  />
-                }
-              />
+                  списка, и пустой он делает их нередактируемыми. Каждая таблица —
+                  своя панель: списки длинные, и без рамки конец одного и начало
+                  другого различались только пустой строкой между ними. */}
+              <Panel>
+                <ManagersTable
+                  managers={state.managers}
+                  onManagersChange={onManagersChange}
+                  onUsersChange={onUsersChange}
+                  addActions={
+                    <AddPeopleActions
+                      action="manager"
+                      trackedIds={trackedIds}
+                      managerIds={managerIds}
+                      onUsersChange={onUsersChange}
+                      onManagersChange={onManagersChange}
+                    />
+                  }
+                />
+              </Panel>
+              <Panel>
+                <TrackedUsersTable
+                  users={state.trackedUsers}
+                  managers={state.managers}
+                  onUsersChange={onUsersChange}
+                  addActions={
+                    <AddPeopleActions
+                      action="track"
+                      trackedIds={trackedIds}
+                      managerIds={managerIds}
+                      onUsersChange={onUsersChange}
+                      onManagersChange={onManagersChange}
+                    />
+                  }
+                />
+              </Panel>
             </Stack>
           </Box>
         </TabPanel>

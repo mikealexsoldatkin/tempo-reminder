@@ -22,6 +22,7 @@ import {
 } from '@forge/react';
 import { api } from '../api';
 import { formatInstant } from '../formatTime';
+import { Panel, TabHeader } from './layout';
 import { useTransientMessage } from './useTransientMessage';
 
 const OUTCOME_VIEW = {
@@ -169,54 +170,56 @@ export const RunTab = ({
   };
 
   return (
-    <Stack space="space.300">
-      <Stack space="space.150">
-        <Heading as="h3" size="medium">Manual run</Heading>
-        <Text>
-          This button runs the same check as the schedule, but immediately: the app looks at every
-          checked working day and sends a Slack DM to everyone who is missing time on at least one
-          of them. The “weekend” and “once per day” limits don’t apply to a manual run.
-        </Text>
-
-        {tokensMissing && (
-          <SectionMessage appearance="warning">
-            <Text>Connect Slack and set the Tempo API token on the “Access” tab first.</Text>
-          </SectionMessage>
-        )}
-
-        {nobodyToCheck && (
-          <SectionMessage appearance="warning">
-            <Text>Nobody is tracked yet — there is nobody to check.</Text>
-          </SectionMessage>
-        )}
-
-        <Inline space="space.100" alignBlock="center">
-          <LoadingButton
-            appearance="primary"
-            isLoading={isStarting}
-            isDisabled={isRunning || tokensMissing || nobodyToCheck}
-            onClick={() => setIsConfirmOpen(true)}
-          >
-            Start check
-          </LoadingButton>
-          <Button appearance="subtle" isDisabled={isStarting} onClick={refresh}>
-            Refresh status
-          </Button>
-          {runStatus?.state === 'stale' && (
+    <Stack space="space.200">
+      <TabHeader
+        title="Manual run"
+        description="This button runs the same check as the schedule, but immediately: the app looks at every checked working day and sends a Slack DM to everyone who is missing time on at least one of them. The “weekend” and “once per day” limits don’t apply to a manual run."
+        message={message}
+        aside={
+          runStatus?.state === 'stale' && (
             <Lozenge appearance="removed">the run didn’t respond — try again</Lozenge>
-          )}
-        </Inline>
+          )
+        }
+        actions={
+          <>
+            <LoadingButton
+              appearance="primary"
+              isLoading={isStarting}
+              isDisabled={isRunning || tokensMissing || nobodyToCheck}
+              onClick={() => setIsConfirmOpen(true)}
+            >
+              Start check
+            </LoadingButton>
+            <Button appearance="subtle" isDisabled={isStarting} onClick={refresh}>
+              Refresh status
+            </Button>
+          </>
+        }
+      />
 
-        {isRunning && <RunProgress runStatus={runStatus} />}
+      {(tokensMissing || nobodyToCheck || isRunning) && (
+        <Panel>
+          <Stack space="space.150">
+            {tokensMissing && (
+              <SectionMessage appearance="warning">
+                <Text>Connect Slack and Tempo on the “Connections” tab first.</Text>
+              </SectionMessage>
+            )}
 
-        {message && (
-          <SectionMessage appearance={message.appearance}>
-            <Text>{message.text}</Text>
-          </SectionMessage>
-        )}
-      </Stack>
+            {nobodyToCheck && (
+              <SectionMessage appearance="warning">
+                <Text>Nobody is tracked yet — there is nobody to check.</Text>
+              </SectionMessage>
+            )}
 
-      <LastReport report={lastReport} />
+            {isRunning && <RunProgress runStatus={runStatus} />}
+          </Stack>
+        </Panel>
+      )}
+
+      <Panel>
+        <LastReport report={lastReport} />
+      </Panel>
 
       <ModalTransition>
         {isConfirmOpen && (

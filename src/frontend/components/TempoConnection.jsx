@@ -15,34 +15,34 @@ import { api } from '../api';
 import { formatInstant } from '../formatTime';
 import { ConfirmDialog } from './ConfirmDialog';
 
-// Пока администратор ходит по вкладке Slack, подключение приезжает не в ответ на
+// Пока администратор ходит по вкладке Tempo, подключение приезжает не в ответ на
 // действие в UI, а через веб-триггер — заметить его можно только опросом.
 const POLL_INTERVAL_MS = 2500;
-// Дольше ждать нечего: ссылка на согласие живёт десять минут, но вкладку к этому
-// времени обычно уже закрыли и забыли. Ожидание снимается, кнопка возвращается.
+// Дольше ждать нечего: ссылка живёт десять минут, но вкладку к этому времени
+// обычно уже закрыли и забыли. Ожидание снимается, кнопка возвращается.
 const WAIT_LIMIT_MS = 3 * 60 * 1000;
 
 /**
- * Подключение Slack.
+ * Подключение Tempo.
  *
- * Кнопка ведёт на экран согласия Slack в соседней вкладке; вернувшись оттуда,
- * приложение само кладёт bot-токен в секретное хранилище — администратору не
- * нужно ни создавать приложение, ни собирать scope, ни копировать `xoxb-…`.
- * Другого пути подключения в UI нет: поле для ручного ввода токена убрано, чтобы
- * не предлагать двадцать шагов рядом с одной кнопкой. Токен, вставленный руками
- * в прежних версиях, продолжает работать — такое подключение здесь описано как
- * «вставлен руками», и заменяется оно тем же нажатием «Connect Slack».
+ * Кнопка ведёт на экран согласия Tempo в соседней вкладке; вернувшись оттуда,
+ * приложение само кладёт токен в секретное хранилище и дальше продлевает его
+ * само. Другого пути подключения в UI нет — как и у Slack: поле для токена из
+ * «Tempo → Settings → API integration» убрано, чтобы не предлагать рядом с одной
+ * кнопкой путь, который к тому же нужно проходить заново каждые 30 дней. Токен,
+ * вставленный руками в прежних версиях, продолжает работать — такое подключение
+ * здесь подписано как «вставлен руками» и заменяется нажатием «Connect Tempo».
  *
- * @param slack
+ * @param tempo
  * @param credentials
  * @param {{ok: boolean, message: string}|null} testResult итог общей проверки на вкладке
  * @param {(result: object) => void} onResult результат резолвера {credentials, slack, tempo}
  * @param {(message: object|null) => void} onMessage сообщение о результате действия
  */
-export const SlackConnection = ({ slack, credentials, testResult, onResult, onMessage }) => {
-  const connection = slack?.connection ?? null;
-  const status = credentials?.slackBotToken ?? { isSet: false };
-  const oauthAvailable = Boolean(slack?.oauthAvailable);
+export const TempoConnection = ({ tempo, credentials, testResult, onResult, onMessage }) => {
+  const connection = tempo?.connection ?? null;
+  const status = credentials?.tempoToken ?? { isSet: false };
+  const oauthAvailable = Boolean(tempo?.oauthAvailable);
 
   const [busy, setBusy] = useState(null);
   const [isWaiting, setWaiting] = useState(false);
@@ -54,7 +54,7 @@ export const SlackConnection = ({ slack, credentials, testResult, onResult, onMe
   const connectedAtOnStart = useRef(null);
 
   const isConnected = status.isSet && Boolean(connection);
-  const isRevoked = Boolean(connection?.revokedError);
+  const isBroken = Boolean(connection?.brokenError);
   const isOAuth = connection?.method === 'oauth';
 
   useEffect(() => {
@@ -62,15 +62,12 @@ export const SlackConnection = ({ slack, credentials, testResult, onResult, onMe
 
     const check = async () => {
       try {
-        const result = await api.getSlackStatus();
-        const next = result.slack?.connection ?? null;
+        const result = await api.getTempoStatus();
+        const next = result.tempo?.connection ?? null;
         if (!next?.connectedAt || next.connectedAt === connectedAtOnStart.current) return;
         setWaiting(false);
         onResult(result);
-        onMessage({
-          appearance: 'success',
-          text: next.teamName ? `Connected to ${next.teamName}` : 'Slack is connected',
-        });
+        onMessage({ appearance: 'success', text: 'Tempo is connected' });
       } catch (e) {
         setWaiting(false);
         onMessage({ appearance: 'error', text: e.message });
@@ -82,7 +79,7 @@ export const SlackConnection = ({ slack, credentials, testResult, onResult, onMe
       setWaiting(false);
       onMessage({
         appearance: 'warning',
-        text: 'Still nothing from Slack. Finish the installation in the Slack tab, or press “Connect Slack” to start again.',
+        text: 'Still nothing from Tempo. Finish the authorization in the Tempo tab, or press “Connect Tempo” to start again.',
       });
     }, WAIT_LIMIT_MS);
 
@@ -96,7 +93,7 @@ export const SlackConnection = ({ slack, credentials, testResult, onResult, onMe
     setBusy('connect');
     onMessage(null);
     try {
-      const { url } = await api.startSlackConnect();
+      const { url } = await api.startTempoConnect();
       connectedAtOnStart.current = connection?.connectedAt ?? null;
       // Новая вкладка, а не переход: страница настроек должна остаться открытой —
       // в неё приезжает результат.
@@ -113,7 +110,7 @@ export const SlackConnection = ({ slack, credentials, testResult, onResult, onMe
     setBusy('disconnect');
     onMessage(null);
     try {
-      const result = await api.disconnectSlack();
+      const result = await api.disconnectTempo();
       onResult(result);
       onMessage({ appearance: 'information', text: result.revoked.message });
     } catch (e) {
@@ -127,31 +124,37 @@ export const SlackConnection = ({ slack, credentials, testResult, onResult, onMe
   return (
     <Stack space="space.150">
       <Inline space="space.100" alignBlock="center">
-        <Heading as="h4" size="small">Slack</Heading>
-        {isConnected && !isRevoked && (
-          <Lozenge appearance="success">
-            {connection.teamName ? `connected · ${connection.teamName}` : 'connected'}
-          </Lozenge>
+        <Heading as="h4" size="small">Tempo</Heading>
+        {isConnected && !isBroken && (
+          <Lozenge appearance="success">{isOAuth ? 'connected' : 'connected · pasted token'}</Lozenge>
         )}
-        {isConnected && isRevoked && <Lozenge appearance="removed">rejected by Slack</Lozenge>}
+        {isConnected && isBroken && <Lozenge appearance="removed">rejected by Tempo</Lozenge>}
         {!isConnected && <Lozenge appearance="removed">not connected</Lozenge>}
       </Inline>
 
-      {isConnected && (
+      {isConnected && isOAuth && (
         <Text>
-          {isOAuth
-            ? `Messages are sent by the app’s bot in ${connection.teamName ?? 'your workspace'}` +
-              `${connection.connectedAt ? `, connected ${formatInstant(connection.connectedAt)}` : ''}.`
-            : 'A bot token was pasted by hand. It keeps working — press “Connect Slack” to replace it with the one-click connection.'}
+          Worklogs are read with the permissions of whoever authorized Tempo
+          {connection.connectedAt ? `, connected ${formatInstant(connection.connectedAt)}` : ''}. The
+          app renews the access on its own
+          {connection.expiresAt ? `; the current one is valid until ${formatInstant(connection.expiresAt)}` : ''}.
         </Text>
       )}
 
-      {isRevoked && (
-        <SectionMessage appearance="warning" title="Slack no longer accepts this connection">
+      {isConnected && !isOAuth && oauthAvailable && (
+        <Text>
+          An API token was pasted by hand. It keeps working, but Tempo expires those on their own
+          schedule — press “Connect Tempo” to switch to a connection the app renews itself.
+        </Text>
+      )}
+
+      {isBroken && (
+        <SectionMessage appearance="warning" title="Tempo no longer accepts this connection">
           <Stack space="space.050">
             <Text>
-              A run got “{connection.revokedError}” from Slack — usually that means the app was
-              removed from the workspace or the token was revoked. Nothing is being delivered.
+              The last call got “{connection.brokenError}” — usually the access was revoked in Tempo,
+              or the person who authorized it lost the permission to view other people’s worklogs.
+              No worklogs are being read, so nobody is checked.
             </Text>
             <Text>Connect again to fix it.</Text>
           </Stack>
@@ -159,7 +162,7 @@ export const SlackConnection = ({ slack, credentials, testResult, onResult, onMe
       )}
 
       {/* Итог проверки живёт здесь, а не у кнопки на вкладке: он про эту систему,
-          и читается вместе с её лозенгом. */}
+          и читается вместе с её лозенгом и сроком токена. */}
       {testResult && (
         <SectionMessage appearance={testResult.ok ? 'success' : 'error'}>
           <Text>{testResult.message}</Text>
@@ -167,12 +170,12 @@ export const SlackConnection = ({ slack, credentials, testResult, onResult, onMe
       )}
 
       {isWaiting && (
-        <SectionMessage appearance="information" title="Waiting for Slack">
+        <SectionMessage appearance="information" title="Waiting for Tempo">
           <Inline space="space.100" alignBlock="center">
             <Spinner size="small" />
             <Text>
-              Finish the installation in the Slack tab that just opened — pick the workspace and
-              press Allow. This page picks it up on its own.
+              Finish the authorization in the Tempo tab that just opened — press Authorize. This page
+              picks it up on its own.
             </Text>
           </Inline>
         </SectionMessage>
@@ -182,12 +185,12 @@ export const SlackConnection = ({ slack, credentials, testResult, onResult, onMe
         <Stack space="space.100">
           <Inline space="space.100" alignBlock="center">
             <LoadingButton
-              appearance={isConnected && !isRevoked ? 'default' : 'primary'}
+              appearance={isConnected && !isBroken ? 'default' : 'primary'}
               isLoading={busy === 'connect'}
               isDisabled={isWaiting}
               onClick={connect}
             >
-              {isConnected ? 'Reconnect Slack' : 'Connect Slack'}
+              {isConnected ? 'Reconnect Tempo' : 'Connect Tempo'}
             </LoadingButton>
             <LoadingButton
               appearance="subtle"
@@ -199,25 +202,27 @@ export const SlackConnection = ({ slack, credentials, testResult, onResult, onMe
             </LoadingButton>
           </Inline>
           <HelperMessage>
-            Slack will ask you to pick a workspace and approve {(slack?.scopes ?? []).join(', ')} —
-            enough to find people by email and send them a direct message. You need to be able to
-            install apps in that workspace; otherwise ask a Slack admin to do it and use the manual
-            token below.
+            Tempo grants access with your own permissions, so authorize as somebody who may view
+            everybody’s worklogs — otherwise people whose time you can’t see look like they never
+            logged any.
           </HelperMessage>
         </Stack>
       ) : (
-        <SectionMessage appearance="warning" title="Slack can’t be connected in this build">
+        // Другого пути в UI нет, поэтому молчать здесь нельзя: без кнопки вкладка
+        // выглядела бы так, будто Tempo подключать нечем в принципе.
+        <SectionMessage appearance="warning" title="Tempo can’t be connected in this build">
           <Text>
-            The Slack app credentials (SLACK_CLIENT_ID, SLACK_CLIENT_SECRET, SLACK_REDIRECT_URI) are
-            not set for this deployment, so there is nothing to connect to. Set them with
-            “forge variables set” and deploy again.
+            The Tempo OAuth credentials (TEMPO_CLIENT_ID, TEMPO_CLIENT_SECRET) are not set for this
+            deployment, so there is nothing to connect to. Register an OAuth 2.0 application in
+            Tempo → Settings → Data Access, set the variables with “forge variables set” and deploy
+            again — see the README.
           </Text>
         </SectionMessage>
       )}
 
       <ConfirmDialog
         isOpen={isConfirmingDisconnect}
-        title="Disconnect Slack?"
+        title="Disconnect Tempo?"
         confirmLabel="Disconnect"
         isBusy={busy === 'disconnect'}
         onConfirm={disconnect}
@@ -225,10 +230,10 @@ export const SlackConnection = ({ slack, credentials, testResult, onResult, onMe
       >
         <Stack space="space.100">
           <Text>
-            The token is revoked in Slack and deleted from Forge secret storage. The app stays
-            installed in Jira, but stops delivering anything.
+            The access is revoked in Tempo and deleted from Forge secret storage. The app stays
+            installed in Jira, but stops reading worklogs — so nobody gets checked.
           </Text>
-          <Text>Connecting again takes one click and does not need anything from Slack settings.</Text>
+          <Text>Connecting again takes one click and does not need anything from Tempo settings.</Text>
         </Stack>
       </ConfirmDialog>
     </Stack>

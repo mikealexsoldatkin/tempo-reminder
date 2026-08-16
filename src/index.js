@@ -2,6 +2,7 @@ import { handler as adminResolver } from './backend/resolvers.js';
 import { enqueueRun } from './backend/runQueue.js';
 import { describeDue, evaluateSchedule, runReminderCheck } from './backend/reminder.js';
 import { handleSlackOAuthCallback } from './backend/slackOAuth.js';
+import { handleTempoOAuthCallback, keepTempoConnectionFresh } from './backend/tempoOAuth.js';
 import { getSettings, saveLastReport, setRunStatus } from './backend/store.js';
 
 /**
@@ -9,12 +10,14 @@ import { getSettings, saveLastReport, setRunStatus } from './backend/store.js';
  *  - resolver           — страница настроек (jira:adminPage), см. src/backend/resolvers.js;
  *  - scheduled          — ежедневный триггер, ставит прогон в очередь;
  *  - runConsumer        — консьюмер очереди, где прогон реально выполняется;
- *  - slackOAuthCallback — веб-триггер, куда возвращается браузер после Slack.
+ *  - slackOAuthCallback — веб-триггер, куда возвращается браузер после Slack;
+ *  - tempoOAuthCallback — то же для Tempo.
  *
  * Токены и список отслеживаемых пользователей живут в Forge KVS. Переменные
- * окружения приложение использует ровно для одного — настроек своего
- * Slack-приложения (SLACK_CLIENT_ID / SLACK_CLIENT_SECRET / SLACK_REDIRECT_URI):
- * они одни на все установки и задаются при сборке, а не администратором.
+ * окружения приложение использует ровно для одного — настроек своих OAuth-клиентов
+ * (SLACK_CLIENT_ID / SLACK_CLIENT_SECRET / SLACK_REDIRECT_URI и TEMPO_CLIENT_ID /
+ * TEMPO_CLIENT_SECRET): они одни на все установки и задаются при сборке, а не
+ * администратором.
  */
 
 export const resolver = adminResolver;
@@ -29,6 +32,12 @@ export const resolver = adminResolver;
  * и внутри прогона: job может выполниться заметно позже, чем был поставлен.
  */
 export async function scheduled() {
+  // Единственное, что делается в каждом срабатывании, независимо от расписания:
+  // продление доступа к Tempo. Оно должно случаться, даже когда рассылки нет
+  // неделями, иначе шестьдесят дней тишины оставляют приложение без токена.
+  // Осечка продления не должна отменять прогон — о ней уже сказано в логе.
+  await keepTempoConnectionFresh().catch(() => false);
+
   const schedule = await evaluateSchedule(await getSettings(), new Date());
   if (!schedule.shouldRun) {
     console.log(`Пропуск: ${schedule.reason}`);
@@ -54,6 +63,24 @@ export async function slackOAuthCallback(request) {
       statusText: 'Error',
       headers: { 'Content-Type': ['text/plain; charset=utf-8'], 'Cache-Control': ['no-store'] },
       body: `Slack was not connected: ${e.message}`,
+    };
+  }
+}
+
+/**
+ * Возврат из Tempo — устроен так же, как слаковский: обработчик разбирает запрос
+ * сам и всегда отвечает страницей.
+ */
+export async function tempoOAuthCallback(request) {
+  try {
+    return await handleTempoOAuthCallback(request);
+  } catch (e) {
+    console.error(`Колбэк Tempo упал: ${e.stack ?? e.message}`);
+    return {
+      statusCode: 500,
+      statusText: 'Error',
+      headers: { 'Content-Type': ['text/plain; charset=utf-8'], 'Cache-Control': ['no-store'] },
+      body: `Tempo was not connected: ${e.message}`,
     };
   }
 }
