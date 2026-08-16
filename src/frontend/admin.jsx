@@ -2,7 +2,6 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import ForgeReconciler, {
   Box,
   Heading,
-  Inline,
   SectionMessage,
   Spinner,
   Stack,
@@ -11,11 +10,9 @@ import ForgeReconciler, {
   TabPanel,
   Tabs,
   Text,
-  xcss,
 } from '@forge/react';
 import { api } from './api';
-import { AddByNameSection } from './components/AddByNameSection';
-import { AddByProjectSection } from './components/AddByProjectSection';
+import { AddPeopleActions } from './components/AddPeopleActions';
 import { TrackedUsersTable } from './components/TrackedUsersTable';
 import { ManagersTable } from './components/ManagersTable';
 import { CredentialsTab } from './components/CredentialsTab';
@@ -25,16 +22,6 @@ import { VacationsTab } from './components/VacationsTab';
 import { RunTab } from './components/RunTab';
 import { ReadinessBanner } from './components/ReadinessBanner';
 import { ErrorBoundary } from './components/ErrorBoundary';
-
-// Две секции поиска стоят рядом, в одну строку: width 100% + flexGrow внутри
-// Inline с grow="fill" означает «поделить поровну всё, что есть», и колонки
-// ужимаются вместе с окном.
-//
-// Без shouldWrap намеренно: при переносе строки каждая колонка требует свои
-// width: 100% и они встают друг под друга. Задать вместо этого нижнюю границу
-// через flexBasis нельзя — xcss пропускает только белый список свойств, и
-// flexBasis в него не входит (в отличие от flexGrow, width и minWidth).
-const searchColumnStyles = xcss({ width: '100%', flexGrow: 1 });
 
 const AdminPage = () => {
   const [state, setState] = useState(null);
@@ -117,37 +104,40 @@ const AdminPage = () => {
 
         <TabPanel>
           <Box paddingBlockStart="space.200">
+            {/* Поиск людей уехал во всплывающие окна: обе формы нужны редко, а
+                места над таблицами занимали столько, что списки уходили под сгиб.
+                Кнопки стоят под каждой таблицей — окно всё равно одно и то же и
+                умеет оба действия, так что открывать его удобно оттуда, где сейчас
+                смотришь. */}
             <Stack space="space.400">
-              <Inline space="space.400" alignBlock="start" grow="fill">
-                <Box xcss={searchColumnStyles}>
-                  <AddByNameSection
-                    trackedIds={trackedIds}
-                    managerIds={managerIds}
-                    onUsersChange={onUsersChange}
-                    onManagersChange={onManagersChange}
-                  />
-                </Box>
-                <Box xcss={searchColumnStyles}>
-                  <AddByProjectSection
-                    trackedIds={trackedIds}
-                    managerIds={managerIds}
-                    onUsersChange={onUsersChange}
-                    onManagersChange={onManagersChange}
-                  />
-                </Box>
-              </Inline>
               {/* Менеджеры идут первыми: колонки в Tracked users выбирают из этого
                   списка, и пустой он делает их нередактируемыми. */}
-              <ManagersTable
-                managers={state.managers}
-                onManagersChange={onManagersChange}
-                onUsersChange={onUsersChange}
-              />
-              <TrackedUsersTable
-                users={state.trackedUsers}
-                managers={state.managers}
-                onUsersChange={onUsersChange}
-              />
+              <Stack space="space.200">
+                <ManagersTable
+                  managers={state.managers}
+                  onManagersChange={onManagersChange}
+                  onUsersChange={onUsersChange}
+                />
+                <AddPeopleActions
+                  trackedIds={trackedIds}
+                  managerIds={managerIds}
+                  onUsersChange={onUsersChange}
+                  onManagersChange={onManagersChange}
+                />
+              </Stack>
+              <Stack space="space.200">
+                <TrackedUsersTable
+                  users={state.trackedUsers}
+                  managers={state.managers}
+                  onUsersChange={onUsersChange}
+                />
+                <AddPeopleActions
+                  trackedIds={trackedIds}
+                  managerIds={managerIds}
+                  onUsersChange={onUsersChange}
+                  onManagersChange={onManagersChange}
+                />
+              </Stack>
             </Stack>
           </Box>
         </TabPanel>

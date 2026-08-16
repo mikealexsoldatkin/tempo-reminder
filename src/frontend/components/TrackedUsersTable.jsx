@@ -36,7 +36,7 @@ export const TrackedUsersTable = ({ users, managers, onUsersChange }) => (
     <PeopleTable
       title="Tracked users"
       people={users}
-      emptyMessage="The list is empty — no reminders will be sent. Add users by searching for a name or by project key."
+      emptyMessage="The list is empty — no reminders will be sent. Use the buttons below to add users by name or by project key."
       onRemove={async (accountIds) =>
         onUsersChange(await api.removeTrackedUsers(accountIds).then((r) => r.users))
       }

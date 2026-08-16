@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Heading, Inline, Label, LoadingButton, Stack, Text, Textfield } from '@forge/react';
+import { Inline, Label, LoadingButton, Stack, Text, Textfield } from '@forge/react';
 import { api } from '../api';
 import { CandidateResults } from './CandidateResults';
 import { useCandidateSearch } from './useCandidateSearch';
@@ -8,6 +8,9 @@ import { candidateActions } from './candidateActions';
 /**
  * Пакетное добавление по ключу проекта — аналог прежнего getProjectPeople():
  * подтягиваем всех, кого можно назначить на задачи проекта, и добавляем батчем.
+ *
+ * Заголовка у секции нет намеренно: она живёт в модальном окне (см.
+ * AddPeopleActions), и название ей даёт ModalTitle.
  */
 export const AddByProjectSection = ({ trackedIds, managerIds, onUsersChange, onManagersChange }) => {
   const [projectKey, setProjectKey] = useState('');
@@ -18,7 +21,6 @@ export const AddByProjectSection = ({ trackedIds, managerIds, onUsersChange, onM
 
   return (
     <Stack space="space.150">
-      <Heading as="h3" size="medium">Add project members</Heading>
       <Text>
         Loads the people from the project’s own roles — the same list you see in Project settings →
         People. Instance-wide roles are ignored, and the result doesn’t depend on the permission

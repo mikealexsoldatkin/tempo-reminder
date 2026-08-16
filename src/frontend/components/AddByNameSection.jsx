@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Heading, Inline, Label, LoadingButton, Stack, Text, Textfield } from '@forge/react';
+import { Inline, Label, LoadingButton, Stack, Text, Textfield } from '@forge/react';
 import { api } from '../api';
 import { CandidateResults } from './CandidateResults';
 import { useCandidateSearch } from './useCandidateSearch';
@@ -8,6 +8,9 @@ import { candidateActions } from './candidateActions';
 /**
  * Поиск пользователей Jira по First + Last name (Jira ищет и по email) и батчевое
  * добавление — под наблюдение и/или в менеджеры.
+ *
+ * Заголовка у секции нет намеренно: она живёт в модальном окне (см.
+ * AddPeopleActions), и название ей даёт ModalTitle.
  */
 export const AddByNameSection = ({ trackedIds, managerIds, onUsersChange, onManagersChange }) => {
   const [query, setQuery] = useState('');
@@ -18,7 +21,6 @@ export const AddByNameSection = ({ trackedIds, managerIds, onUsersChange, onMana
 
   return (
     <Stack space="space.150">
-      <Heading as="h3" size="medium">Search by name</Heading>
       <Text>
         Enter a first and last name (or part of one) — Jira searches by display name and email.
         Tick the people you need, then put them under tracking, mark them as managers, or both.
