@@ -16,7 +16,9 @@ import {
   Textfield,
 } from '@forge/react';
 import { api } from '../api';
+import { formatInstant } from '../formatTime';
 import { ConfirmDialog } from './ConfirmDialog';
+import { useTransientMessage } from './useTransientMessage';
 
 /**
  * Календарь отпусков. Отпускной день не долг: за него не спрашивают ни сотрудника,
@@ -29,7 +31,8 @@ import { ConfirmDialog } from './ConfirmDialog';
 export const VacationsTab = ({ settings, credentials, onSettingsChange, onCredentialsChange }) => {
   const [icsUrl, setIcsUrl] = useState('');
   const [busy, setBusy] = useState(null);
-  const [message, setMessage] = useState(null);
+  // Успех гаснет сам, ошибка остаётся: см. useTransientMessage.
+  const [message, setMessage] = useTransientMessage();
   const [test, setTest] = useState(null);
   // Адрес живёт в секретном хранилище и обратно не читается: удалили — значит идти
   // за ним в настройки календаря заново.
@@ -163,7 +166,7 @@ export const VacationsTab = ({ settings, credentials, onSettingsChange, onCreden
           in iCal format”. Anyone holding this link can read the calendar, so it is stored in Forge
           secret storage and never shown back. Note that Google serves this feed from a cache: a
           vacation entered a few minutes ago may take a while to appear here.
-          {status.updatedAt ? ` Updated: ${new Date(status.updatedAt).toLocaleString()}.` : ''}
+          {status.updatedAt ? ` Updated: ${formatInstant(status.updatedAt)}.` : ''}
         </HelperMessage>
       </Stack>
 

@@ -25,6 +25,7 @@ import {
 } from '@forge/react';
 import { api } from '../api';
 import { ConfirmDialog } from './ConfirmDialog';
+import { useTransientMessage } from './useTransientMessage';
 
 // Select своей ширины не имеет и растягивается по родителю — задаём её обёрткой.
 const WIDE = xcss({ width: '220px' });
@@ -78,7 +79,8 @@ export const HolidaysTab = ({ holidays, settings, onHolidaysChange, onSettingsCh
   const [form, setForm] = useState(EMPTY_FORM);
   const [isBusy, setIsBusy] = useState(false);
   const [selected, setSelected] = useState(new Set());
-  const [message, setMessage] = useState(null);
+  // Успех гаснет сам, ошибка остаётся: см. useTransientMessage.
+  const [message, setMessage] = useTransientMessage();
   // Форма добавления живёт в модальном окне: на вкладке она занимала экран под
   // действие, которое делают несколько раз за всё время. Ошибка правила остаётся
   // внутри окна — закрывать его, чтобы прочитать причину и набрать всё заново,

@@ -565,6 +565,29 @@ export async function setRunStatus(status) {
 }
 
 /**
+ * Отметка «докуда дошёл прогон» — её опрашивает страница настроек, пока идёт
+ * проверка: без неё выполнение выглядит как «running…» неопределённой длины, и
+ * зависший прогон неотличим от долгого.
+ *
+ * Пишется только поверх состояния 'running': прогон, который уже закончился (или
+ * ещё не начинался), воскрешать поздним прогрессом нельзя — это вернуло бы на
+ * страницу спиннер вместо готового отчёта.
+ *
+ * Заодно сдвигается updatedAt, поэтому длинный, но живой прогон не превращается
+ * в 'stale' (см. STALE_RUN_MS): признаком зависания становится молчание, а не
+ * длительность.
+ *
+ * @param {{phase: string, done?: number, total?: number}} progress
+ */
+export async function setRunProgress(progress) {
+  const status = await kvs.get(KEY.runStatus);
+  if (status?.state !== 'running') return status ?? null;
+  const next = { ...status, progress, updatedAt: new Date().toISOString() };
+  await kvs.set(KEY.runStatus, next);
+  return next;
+}
+
+/**
  * Слоты расписания, уже отработавшие в текущих сутках (UTC) — отдельным ключом,
  * чтобы ручные прогоны, перетирающие отчёт, не сбивали расписание.
  *

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Box,
   Button,
@@ -13,12 +13,16 @@ import {
   ModalHeader,
   ModalTitle,
   ModalTransition,
+  ProgressBar,
   SectionMessage,
   Spinner,
   Stack,
   Text,
+  xcss,
 } from '@forge/react';
 import { api } from '../api';
+import { formatInstant } from '../formatTime';
+import { useTransientMessage } from './useTransientMessage';
 
 const OUTCOME_VIEW = {
   reminded: { appearance: 'inprogress', label: 'reminder sent' },
@@ -41,6 +45,61 @@ const REPORT_STATUS_VIEW = {
 
 const POLL_INTERVAL_MS = 3000;
 
+// Полоса своей ширины не имеет и растягивается по родителю — задаём её обёрткой.
+const progressBarStyles = xcss({ width: '360px', maxWidth: '100%' });
+
+/**
+ * Чем прогон занят прямо сейчас. Фазы приходят из бэкенда (RUN_PHASE в
+ * reminder.js); незнакомую покажем как есть, а не спрячем — новая фаза не повод
+ * возвращать пользователя к безымянному «running…».
+ */
+const PHASE_LABEL = {
+  worklogs: 'Reading worklogs from Tempo',
+  vacations: 'Reading the vacation calendar',
+  users: 'Messaging tracked users',
+  managers: 'Sending manager digests',
+  detailed: 'Sending detailed reports',
+};
+
+/**
+ * Ход прогона: фаза, «сделано из скольких» и полоса.
+ *
+ * Пока прогресса нет (очередь, первые секунды консьюмера), полоса неопределённая:
+ * рисовать 0 % там, где счёта ещё нет, значило бы врать про то, что ничего не
+ * сделано. Компонент без хуков — его вызывает родитель, а не таблица, но правило
+ * из PeopleTable.jsx удобно держать общим.
+ */
+const RunProgress = ({ runStatus }) => {
+  const progress = runStatus?.progress ?? null;
+  const total = progress?.total ?? 0;
+  const done = Math.min(progress?.done ?? 0, total);
+  const hasCount = total > 0;
+  const phase = progress ? PHASE_LABEL[progress.phase] ?? progress.phase : null;
+
+  const text =
+    runStatus.state === 'queued'
+      ? 'Check is queued…'
+      : phase
+        ? `${phase}${hasCount ? `: ${done} of ${total}` : '…'}`
+        : 'Check is running…';
+
+  return (
+    <Stack space="space.050">
+      <Inline space="space.100" alignBlock="center">
+        <Spinner size="small" />
+        <Text>{text}</Text>
+      </Inline>
+      <Box xcss={progressBarStyles}>
+        <ProgressBar
+          ariaLabel={text}
+          isIndeterminate={!hasCount}
+          value={hasCount ? done / total : 0}
+        />
+      </Box>
+    </Stack>
+  );
+};
+
 /**
  * Ручной запуск проверки в обход scheduledTrigger + отчёт последнего прогона.
  * Сама проверка идёт в очереди, поэтому статус подтягиваем поллингом.
@@ -55,7 +114,10 @@ export const RunTab = ({
 }) => {
   const [isStarting, setIsStarting] = useState(false);
   const [isConfirmOpen, setIsConfirmOpen] = useState(false);
-  const [message, setMessage] = useState(null);
+  // «Поставлено в очередь» — отчёт о нажатии кнопки, и жить он должен ровно
+  // столько, сколько остаётся новостью: дальше про прогон рассказывают полоса
+  // хода и отчёт под ней. Ошибка запуска, наоборот, остаётся.
+  const [message, setMessage] = useTransientMessage();
 
   const isRunning = runStatus?.state === 'queued' || runStatus?.state === 'running';
   const tokensMissing = !credentials.tempoToken?.isSet || !credentials.slackBotToken?.isSet;
@@ -77,6 +139,19 @@ export const RunTab = ({
     const timer = setInterval(refresh, POLL_INTERVAL_MS);
     return () => clearInterval(timer);
   }, [isRunning, refresh]);
+
+  // Прогон закончился — «поставлено в очередь» пора убрать: под ним уже лежит
+  // отчёт этого самого прогона, и рядом с ним сообщение о постановке в очередь
+  // читается как «идёт ещё один».
+  const wasRunning = useRef(false);
+  useEffect(() => {
+    if (isRunning) {
+      wasRunning.current = true;
+    } else if (wasRunning.current) {
+      wasRunning.current = false;
+      setMessage(null);
+    }
+  }, [isRunning, setMessage]);
 
   const start = async () => {
     setIsConfirmOpen(false);
@@ -127,18 +202,12 @@ export const RunTab = ({
           <Button appearance="subtle" isDisabled={isStarting} onClick={refresh}>
             Refresh status
           </Button>
-          {isRunning && (
-            <Inline space="space.100" alignBlock="center">
-              <Spinner size="small" />
-              <Text>
-                {runStatus.state === 'queued' ? 'Check is queued…' : 'Check is running…'}
-              </Text>
-            </Inline>
-          )}
           {runStatus?.state === 'stale' && (
             <Lozenge appearance="removed">the run didn’t respond — try again</Lozenge>
           )}
         </Inline>
+
+        {isRunning && <RunProgress runStatus={runStatus} />}
 
         {message && (
           <SectionMessage appearance={message.appearance}>
@@ -215,7 +284,9 @@ const LastReport = ({ report }) => {
       <Heading as="h3" size="medium">Last run</Heading>
       <Inline space="space.100" alignBlock="center">
         <Lozenge appearance={status.appearance}>{status.label}</Lozenge>
-        <Text>{new Date(report.startedAt).toLocaleString()}</Text>
+        {/* В UTC, как окно и расписания рядом: местное время в этой же строке
+            читалось бы как расхождение данных, а не как разница зон. */}
+        <Text>{formatInstant(report.startedAt)}</Text>
         <Lozenge>{report.trigger === 'manual' ? 'manual' : 'scheduled'}</Lozenge>
         {report.window && (
           <Text>

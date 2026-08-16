@@ -15,6 +15,7 @@ import {
   xcss,
 } from '@forge/react';
 import { api } from '../api';
+import { useTransientMessage } from './useTransientMessage';
 
 // TextArea тянется на всю ширину родителя и своей ширины не имеет, поэтому размер
 // шаблонам задаёт обёртка, а не сами поля. width: '100%' + flexGrow внутри Inline
@@ -98,7 +99,10 @@ export const SettingsTab = ({ settings, schedule, onSettingsChange }) => {
   const savedRef = useRef(saved);
   const [scheduleInfo, setScheduleInfo] = useState(schedule ?? null);
   const [savingField, setSavingField] = useState(null);
-  const [status, setStatus] = useState(null);
+  // «X saved» гаснет само — про то, всё ли сохранено сейчас, говорит лозенг у
+  // заголовка, а не строка о последнем сохранении. Сообщение о неудаче остаётся:
+  // поле в этом случае откачено, и знать об этом нужно (см. useTransientMessage).
+  const [status, setStatus] = useTransientMessage();
 
   const rememberSaved = (next) => {
     savedRef.current = next;

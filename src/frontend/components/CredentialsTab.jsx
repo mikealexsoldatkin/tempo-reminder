@@ -14,7 +14,9 @@ import {
   Textfield,
 } from '@forge/react';
 import { api } from '../api';
+import { formatInstant } from '../formatTime';
 import { ConfirmDialog } from './ConfirmDialog';
+import { useTransientMessage } from './useTransientMessage';
 
 const CREDENTIALS = [
   {
@@ -36,7 +38,10 @@ const CREDENTIALS = [
 export const CredentialsTab = ({ credentials, onCredentialsChange }) => {
   const [inputs, setInputs] = useState({ tempoToken: '', slackBotToken: '' });
   const [busy, setBusy] = useState(null);
-  const [message, setMessage] = useState(null);
+  // Сообщения об успехе гаснут сами: «Token saved» под формой — это отчёт о
+  // нажатии кнопки, а не признак того, что с токеном сейчас всё хорошо. Про
+  // текущее состояние говорит лозенг у поля, и он никуда не денется.
+  const [message, setMessage] = useTransientMessage();
   const [testResults, setTestResults] = useState(null);
   // Токен из секретного хранилища не читается — «Remove» стирает единственный
   // экземпляр значения, и восстановить его можно только сходив за новым в Tempo
@@ -141,7 +146,7 @@ export const CredentialsTab = ({ credentials, onCredentialsChange }) => {
               </Form>
               <HelperMessage>
                 {hint}
-                {status.updatedAt ? ` Updated: ${new Date(status.updatedAt).toLocaleString()}.` : ''}
+                {status.updatedAt ? ` Updated: ${formatInstant(status.updatedAt)}.` : ''}
               </HelperMessage>
             </Stack>
           </Box>

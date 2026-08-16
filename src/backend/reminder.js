@@ -9,6 +9,7 @@ import {
   getTrackedUsers,
   markRunTimesHandled,
   saveLastReport,
+  setRunProgress,
   setRunStatus,
 } from './store.js';
 import { getUserWorklogs, getWorklogDaysByAuthor, sleep } from './tempo.js';
@@ -62,6 +63,45 @@ const SLACK_LOOKUP_PAUSE_MS = 200;
 const SLACK_SEND_PAUSE_MS = 300;
 // Детальные отчёты идут по запросу на человека — шлюз Tempo режет на ~5 req/s.
 const TEMPO_USER_PAUSE_MS = 250;
+
+/**
+ * Как часто прогон отмечается в статусе. Страница опрашивает его раз в три
+ * секунды, так что писать чаще незачем: это лишние записи в KVS на каждого
+ * человека и ничего сверх того, что уже видно на экране.
+ */
+const PROGRESS_THROTTLE_MS = 2000;
+
+export const RUN_PHASE = {
+  worklogs: 'worklogs',
+  vacations: 'vacations',
+  users: 'users',
+  managers: 'managers',
+  detailed: 'detailed',
+};
+
+/**
+ * Отметки прогресса: где прогон сейчас и сколько из скольких сделано.
+ *
+ * Смена фазы пишется всегда, шаги внутри фазы — не чаще, чем раз в
+ * PROGRESS_THROTTLE_MS. Пропущенный из-за этого последний шаг фазы не страшен:
+ * следующая фаза перепишет отметку целиком, а последняя — завершение прогона.
+ *
+ * Ошибка записи проглатывается: прогресс — это удобство, из-за которого рассылка
+ * падать не должна.
+ */
+function makeProgressReporter() {
+  let lastWriteAt = 0;
+  return async function report(phase, { done = 0, total = 0, force = false } = {}) {
+    const now = Date.now();
+    if (!force && now - lastWriteAt < PROGRESS_THROTTLE_MS) return;
+    lastWriteAt = now;
+    try {
+      await setRunProgress({ phase, done, total });
+    } catch (e) {
+      console.warn(`Не удалось записать прогресс (${phase}): ${e.message}`);
+    }
+  };
+}
 
 /**
  * Один прогон проверки: кто из отслеживаемых пользователей не репортился в Tempo
@@ -174,9 +214,12 @@ export async function runReminderCheck({ trigger, requestedBy = null, now = new 
   // Пустой список отслеживаемых пропускает запрос целиком: он прокачивает через
   // себя worklog'и всего инстанса, а сверять их будет не с кем. Детальные отчёты
   // от него не зависят — они ходят за записями конкретного человека.
+  const progress = makeProgressReporter();
+
   const fetchRange = windowOf(requiredDays);
   let daysByAuthor = new Map();
   if (users.length > 0) {
+    await progress(RUN_PHASE.worklogs, { total: users.length, force: true });
     try {
       daysByAuthor = await getWorklogDaysByAuthor(fetchRange.from, fetchRange.to, tempoToken);
     } catch (e) {
@@ -207,6 +250,7 @@ export async function runReminderCheck({ trigger, requestedBy = null, now = new 
   //
   // Окно берём целиком, а не только спрашиваемые дни: пустые дни в детальном
   // отчёте тоже должны объясняться отпуском, а он захватывает и самые свежие дни.
+  await progress(RUN_PHASE.vacations, { force: true });
   const vacations = await loadVacations({
     settings,
     users,
@@ -230,6 +274,7 @@ export async function runReminderCheck({ trigger, requestedBy = null, now = new 
         window,
         settings,
         slackBotToken,
+        progress,
       })
     : [];
   const managerRows = targets.managers
@@ -240,6 +285,7 @@ export async function runReminderCheck({ trigger, requestedBy = null, now = new 
         window,
         settings,
         slackBotToken,
+        progress,
       })
     : [];
   const detailedRows = targets.detailed
@@ -251,6 +297,7 @@ export async function runReminderCheck({ trigger, requestedBy = null, now = new 
         isHoliday,
         tempoToken,
         slackBotToken,
+        progress,
       })
     : [];
 
@@ -361,11 +408,14 @@ async function remindUsers({
   window,
   settings,
   slackBotToken,
+  progress,
 }) {
   const rows = [];
   const slackIdsToCache = {};
 
+  await progress(RUN_PHASE.users, { done: 0, total: users.length, force: true });
   for (const user of users) {
+    await progress(RUN_PHASE.users, { done: rows.length, total: users.length });
     const missingDays = missingDaysByUser.get(user.accountId) ?? [];
     const excusedDays = excusedDaysByUser.get(user.accountId) ?? [];
     if (missingDays.length === 0) {
@@ -424,6 +474,7 @@ async function notifyManagers({
   window,
   settings,
   slackBotToken,
+  progress,
 }) {
   const managers = await getManagers();
   if (managers.length === 0) return [];
@@ -435,7 +486,9 @@ async function notifyManagers({
   const rows = [];
   const slackIdsToCache = {};
 
+  await progress(RUN_PHASE.managers, { done: 0, total: managers.length, force: true });
   for (const manager of managers) {
+    await progress(RUN_PHASE.managers, { done: rows.length, total: managers.length });
     const people = withPeople.get(manager.accountId) ?? [];
     const isAllClear = people.length === 0;
     const managedCount = managedCounts.get(manager.accountId) ?? 0;
@@ -484,6 +537,7 @@ async function sendDetailedReports({
   isHoliday,
   tempoToken,
   slackBotToken,
+  progress,
 }) {
   if (detailedUsers.length === 0) return [];
 
@@ -492,8 +546,14 @@ async function sendDetailedReports({
   const slackIdsToCache = {};
   // Разные люди списывают время в одни и те же задачи — ключи добираем один раз на прогон.
   const issueCache = new Map();
+  // Строк здесь больше, чем людей: у одного сотрудника может быть несколько
+  // получателей, и каждая доставка — своя строка. Считаем поэтому людей.
+  let done = 0;
 
+  await progress(RUN_PHASE.detailed, { done: 0, total: detailedUsers.length, force: true });
   for (const user of detailedUsers) {
+    await progress(RUN_PHASE.detailed, { done, total: detailedUsers.length });
+    done += 1;
     const recipients = (user.detailedManagerIds ?? [])
       .map((accountId) => managersById.get(accountId))
       .filter(Boolean);
