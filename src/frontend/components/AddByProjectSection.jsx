@@ -1,5 +1,14 @@
 import React, { useState } from 'react';
-import { Inline, Label, LoadingButton, Stack, Text, Textfield } from '@forge/react';
+import {
+  Form,
+  HelperMessage,
+  Inline,
+  Label,
+  LoadingButton,
+  Stack,
+  Text,
+  Textfield,
+} from '@forge/react';
 import { api } from '../api';
 import { CandidateResults } from './CandidateResults';
 import { useCandidateSearch } from './useCandidateSearch';
@@ -23,6 +32,12 @@ export const AddByProjectSection = ({ trackedIds, managerIds, onUsersChange, onM
     actions: candidateActions({ onUsersChange, onManagersChange }),
   });
 
+  const isEmpty = projectKey.trim().length === 0;
+  const submit = () => {
+    if (isEmpty || search.isSearching) return;
+    search.runSearch(projectKey, { preselectUntracked: true, trackedIds });
+  };
+
   return (
     <Stack space="space.150">
       <Text>
@@ -31,24 +46,29 @@ export const AddByProjectSection = ({ trackedIds, managerIds, onUsersChange, onM
         scheme. Anyone not tracked yet is ticked automatically — clear the ones you don’t need.
       </Text>
 
-      <Label labelFor="project-key">Jira project key</Label>
-      <Inline space="space.100" alignBlock="end">
-        <Textfield
-          id="project-key"
-          width={200}
-          value={projectKey}
-          placeholder="For example: ABC"
-          onChange={(e) => setProjectKey(e.target.value)}
-        />
-        <LoadingButton
-          appearance="primary"
-          isLoading={search.isSearching}
-          isDisabled={projectKey.trim().length === 0}
-          onClick={() => search.runSearch(projectKey, { preselectUntracked: true, trackedIds })}
-        >
-          Load members
-        </LoadingButton>
-      </Inline>
+      {/* Форма ради Enter: Textfield в UI Kit не принимает onKeyDown, так что
+          клавиша доходит до поиска только через submit настоящей формы. */}
+      <Form onSubmit={submit}>
+        <Label labelFor="project-key">Jira project key</Label>
+        <Inline space="space.100" alignBlock="end">
+          <Textfield
+            id="project-key"
+            width={200}
+            value={projectKey}
+            placeholder="For example: ABC"
+            onChange={(e) => setProjectKey(e.target.value)}
+          />
+          <LoadingButton
+            appearance="primary"
+            type="submit"
+            isLoading={search.isSearching}
+            isDisabled={isEmpty}
+          >
+            Load members
+          </LoadingButton>
+        </Inline>
+      </Form>
+      <HelperMessage>Press Enter to load the members.</HelperMessage>
 
       <CandidateResults
         search={search}

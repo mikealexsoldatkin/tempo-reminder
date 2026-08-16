@@ -1,5 +1,14 @@
 import React, { useState } from 'react';
-import { Inline, Label, LoadingButton, Stack, Text, Textfield } from '@forge/react';
+import {
+  Form,
+  HelperMessage,
+  Inline,
+  Label,
+  LoadingButton,
+  Stack,
+  Text,
+  Textfield,
+} from '@forge/react';
 import { api } from '../api';
 import { CandidateResults } from './CandidateResults';
 import { useCandidateSearch } from './useCandidateSearch';
@@ -29,6 +38,14 @@ export const AddByNameSection = ({
     actions: candidateActions({ onUsersChange, onManagersChange }),
   });
 
+  // Jira ищет по подстроке, и с одного символа ответ — это половина инстанса,
+  // поэтому нижняя граница есть; Enter при коротком запросе просто ничего не делает.
+  const isTooShort = query.trim().length < 2;
+  const submit = () => {
+    if (isTooShort || search.isSearching) return;
+    search.runSearch(query);
+  };
+
   return (
     <Stack space="space.150">
       <Text>
@@ -37,24 +54,34 @@ export const AddByNameSection = ({
         {action === 'manager' ? 'to the managers.' : 'to the tracked users.'}
       </Text>
 
-      <Label labelFor="user-name-query">User name</Label>
-      <Inline space="space.100" alignBlock="end">
-        <Textfield
-          id="user-name-query"
-          width={320}
-          value={query}
-          placeholder="For example: Ivan Petrov"
-          onChange={(e) => setQuery(e.target.value)}
-        />
-        <LoadingButton
-          appearance="primary"
-          isLoading={search.isSearching}
-          isDisabled={query.trim().length < 2}
-          onClick={() => search.runSearch(query)}
-        >
-          Search
-        </LoadingButton>
-      </Inline>
+      {/* Форма, а не просто поле с кнопкой: Textfield в UI Kit не принимает
+          onKeyDown, и единственный способ отдать Enter поиску — submit настоящей
+          формы с кнопкой type="submit". */}
+      <Form onSubmit={submit}>
+        <Label labelFor="user-name-query">User name</Label>
+        <Inline space="space.100" alignBlock="end">
+          <Textfield
+            id="user-name-query"
+            width={320}
+            value={query}
+            placeholder="For example: Ivan Petrov"
+            onChange={(e) => setQuery(e.target.value)}
+          />
+          <LoadingButton
+            appearance="primary"
+            type="submit"
+            isLoading={search.isSearching}
+            isDisabled={isTooShort}
+          >
+            Search
+          </LoadingButton>
+        </Inline>
+      </Form>
+      <HelperMessage>
+        {isTooShort
+          ? 'Type at least two characters, then press Enter or click Search.'
+          : 'Press Enter to search.'}
+      </HelperMessage>
 
       <CandidateResults
         search={search}

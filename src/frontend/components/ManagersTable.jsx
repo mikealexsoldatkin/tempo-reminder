@@ -17,6 +17,7 @@ export const ManagersTable = ({ managers, onManagersChange, onUsersChange, addAc
     title="Managers"
     people={managers}
     addActions={addActions}
+    removeWarning="They are also cleared from every tracked user who has them in the “basic report” or “detailed report” column, so those people lose that recipient. Nothing rebuilds those columns for you."
     emptyMessage="No managers yet — nobody will get the digests or the detailed reports. Add them with the “Add managers” button below."
     onRemove={async (accountIds) => {
       const result = await api.removeManagers(accountIds);

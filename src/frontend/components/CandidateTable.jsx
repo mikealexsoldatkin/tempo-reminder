@@ -17,11 +17,13 @@ export const CandidateTable = ({
   const head = {
     cells: [
       { key: 'select', content: '', width: 5 },
-      { key: 'name', content: 'Name' },
-      { key: 'email', content: 'Email' },
-      ...(showRoles ? [{ key: 'roles', content: 'Project roles' }] : []),
-      { key: 'status', content: 'Tracked' },
-      { key: 'manager', content: 'Manager' },
+      { key: 'name', content: 'Name', isSortable: true },
+      { key: 'email', content: 'Email', isSortable: true },
+      ...(showRoles ? [{ key: 'roles', content: 'Project roles', isSortable: true }] : []),
+      // Сортировка по «уже есть в списке» — способ отделить новых от знакомых,
+      // когда проект отдал полсотни человек, из которых половина заведена.
+      { key: 'status', content: 'Tracked', isSortable: true },
+      { key: 'manager', content: 'Manager', isSortable: true },
     ],
   };
 
@@ -41,13 +43,20 @@ export const CandidateTable = ({
             />
           ),
         },
-        { key: 'name', content: <Text>{candidate.displayName}</Text> },
-        { key: 'email', content: <Text>{candidate.email ?? '— no email'}</Text> },
+        // Ключ сортируемой ячейки — это значение, по которому таблица сортирует:
+        // элементы UI Kit ей сравнивать нечем.
+        { key: candidate.displayName, content: <Text>{candidate.displayName}</Text> },
+        { key: candidate.email ?? '', content: <Text>{candidate.email ?? '— no email'}</Text> },
         ...(showRoles
-          ? [{ key: 'roles', content: <Text>{candidate.roles?.join(', ') || '—'}</Text> }]
+          ? [
+              {
+                key: candidate.roles?.join(', ') || '',
+                content: <Text>{candidate.roles?.join(', ') || '—'}</Text>,
+              },
+            ]
           : []),
         {
-          key: 'status',
+          key: isTracked ? 'tracked' : 'not tracked',
           content: (
             <Lozenge appearance={isTracked ? 'success' : 'default'}>
               {isTracked ? 'tracked' : 'not tracked'}
@@ -55,7 +64,7 @@ export const CandidateTable = ({
           ),
         },
         {
-          key: 'manager',
+          key: isManager ? 'manager' : '—',
           content: (
             <Lozenge appearance={isManager ? 'success' : 'default'}>
               {isManager ? 'manager' : '—'}
@@ -73,7 +82,14 @@ export const CandidateTable = ({
           Found: {candidates.length}, selected: {selected.size}
         </Text>
       </Inline>
-      <DynamicTable head={head} rows={rows} rowsPerPage={10} isFixedSize />
+      <DynamicTable
+        head={head}
+        rows={rows}
+        rowsPerPage={10}
+        isFixedSize
+        defaultSortKey="name"
+        defaultSortOrder="ASC"
+      />
     </Box>
   );
 };

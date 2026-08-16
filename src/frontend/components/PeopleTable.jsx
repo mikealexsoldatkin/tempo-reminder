@@ -5,15 +5,17 @@ import {
   Checkbox,
   DynamicTable,
   Heading,
+  HelperMessage,
   Inline,
   InlineEdit,
-  LoadingButton,
+  Label,
   Lozenge,
   SectionMessage,
   Stack,
   Text,
   Textfield,
 } from '@forge/react';
+import { ConfirmDialog } from './ConfirmDialog';
 
 /**
  * DynamicTable не отдаёт содержимое ячейки на обычный рендер: если content —
@@ -39,6 +41,18 @@ const EmailCell = ({ email, onConfirm }) => (
   />
 );
 
+// Поиск по таблице появляется только там, где глазами уже не находится. На пяти
+// строках поле над таблицей — лишний элемент, на пятидесяти без него человека
+// приходится искать листанием страниц по 20 строк.
+const FILTER_FROM = 6;
+
+// Сколько имён перечислить в окне подтверждения. Больше десятка — это уже не
+// «проверь, что удаляешь», а простыня, которую не читают.
+const NAMES_IN_CONFIRM = 10;
+
+const matches = (person, needle) =>
+  `${person.displayName} ${person.email ?? ''}`.toLowerCase().includes(needle);
+
 /**
  * Список людей из Jira: удаление (по одному и батчем) и ручная правка email —
  * он нужен для поиска человека в Slack, а Jira отдаёт его только если профиль
@@ -62,6 +76,8 @@ const EmailCell = ({ email, onConfirm }) => (
  * @param {JSX.Element} [props.addActions] кнопки добавления людей — они встают в
  *   тот же ряд, что «Remove selected» и «Clear selection», первыми. Ряд поэтому
  *   рисуется и у пустой таблицы: иначе добавлять в неё было бы нечем.
+ * @param {string} [props.removeWarning] чем ещё обернётся удаление, кроме исчезновения
+ *   строки. Показывается в окне подтверждения — там, где его прочитают.
  */
 export const PeopleTable = ({
   title,
@@ -72,10 +88,15 @@ export const PeopleTable = ({
   extraColumns = [],
   showContact = true,
   addActions = null,
+  removeWarning = null,
 }) => {
   const [selected, setSelected] = useState(new Set());
   const [isBusy, setIsBusy] = useState(false);
   const [error, setError] = useState(null);
+  const [query, setQuery] = useState('');
+  // Что подтверждаем: {accountIds, names}. Одна и та же форма и для строки, и для
+  // батча — разницы для пользователя между ними нет, а для последствий тем более.
+  const [pendingRemoval, setPendingRemoval] = useState(null);
 
   const toggle = (accountId) => {
     setSelected((prev) => {
@@ -85,6 +106,33 @@ export const PeopleTable = ({
       return next;
     });
   };
+
+  const needle = query.trim().toLowerCase();
+  const visible = needle ? people.filter((person) => matches(person, needle)) : people;
+
+  // «Выделить всё» работает по видимому: при включённом фильтре галочка в шапке
+  // означает «все найденные», а не «все вообще» — иначе она отмечала бы то, чего
+  // на экране нет.
+  const selectedVisible = visible.filter((person) => selected.has(person.accountId)).length;
+  const areAllVisibleSelected = visible.length > 0 && selectedVisible === visible.length;
+
+  const toggleAllVisible = () => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      for (const person of visible) {
+        if (areAllVisibleSelected) next.delete(person.accountId);
+        else next.add(person.accountId);
+      }
+      return next;
+    });
+  };
+
+  // Заголовок таблицы задан текстом («Tracked users»), а id с пробелом не свяжет
+  // Label с полем.
+  const filterId = `filter-${title.toLowerCase().replace(/\s+/g, '-')}`;
+
+  const nameOf = (accountId) =>
+    people.find((person) => person.accountId === accountId)?.displayName ?? accountId;
 
   /**
    * Выделение сбрасывается только там, где строки исчезают. Правка email или
@@ -104,18 +152,41 @@ export const PeopleTable = ({
     }
   };
 
+  const confirmRemoval = async () => {
+    const { accountIds } = pendingRemoval;
+    await mutate(() => onRemove(accountIds), { clearSelection: true });
+    setPendingRemoval(null);
+  };
+
   const head = {
     cells: [
-      { key: 'select', content: '', width: 5 },
-      { key: 'name', content: 'Name' },
-      ...(showContact ? [{ key: 'email', content: 'Email for Slack lookup' }] : []),
+      {
+        key: 'select',
+        width: 5,
+        content: (
+          <Checkbox
+            isChecked={areAllVisibleSelected}
+            isIndeterminate={selectedVisible > 0 && !areAllVisibleSelected}
+            isDisabled={visible.length === 0}
+            onChange={toggleAllVisible}
+            label=""
+          />
+        ),
+      },
+      { key: 'name', content: 'Name', isSortable: true },
+      ...(showContact
+        ? [{ key: 'email', content: 'Email for Slack lookup', isSortable: true }]
+        : []),
       ...extraColumns.map(({ key, header }) => ({ key, content: header })),
-      ...(showContact ? [{ key: 'slack', content: 'Slack' }] : []),
+      ...(showContact ? [{ key: 'slack', content: 'Slack', isSortable: true }] : []),
       { key: 'actions', content: '', width: 10 },
     ],
   };
 
-  const rows = people.map((person) => ({
+  // У сортируемых колонок ключ ячейки — это значение, по которому таблица
+  // сортирует (её собственный контракт: content из элементов сравнивать нечем).
+  // У остальных он остаётся именем колонки.
+  const rows = visible.map((person) => ({
     key: person.accountId,
     cells: [
       {
@@ -128,11 +199,11 @@ export const PeopleTable = ({
           />
         ),
       },
-      { key: 'name', content: <Text>{person.displayName}</Text> },
+      { key: person.displayName, content: <Text>{person.displayName}</Text> },
       ...(showContact
         ? [
             {
-              key: 'email',
+              key: person.email ?? '',
               content: (
                 <EmailCell
                   email={person.email}
@@ -146,7 +217,7 @@ export const PeopleTable = ({
       ...(showContact
         ? [
             {
-              key: 'slack',
+              key: person.slackUserId ? 'found' : '—',
               content: (
                 <Lozenge appearance={person.slackUserId ? 'success' : 'default'}>
                   {person.slackUserId ? 'found' : '—'}
@@ -162,7 +233,12 @@ export const PeopleTable = ({
             appearance="subtle"
             iconBefore="trash"
             isDisabled={isBusy}
-            onClick={() => mutate(() => onRemove([person.accountId]), { clearSelection: true })}
+            onClick={() =>
+              setPendingRemoval({
+                accountIds: [person.accountId],
+                names: [person.displayName],
+              })
+            }
           >
             Remove
           </Button>
@@ -170,6 +246,9 @@ export const PeopleTable = ({
       },
     ],
   }));
+
+  const shownNames = pendingRemoval?.names.slice(0, NAMES_IN_CONFIRM) ?? [];
+  const hiddenNames = (pendingRemoval?.names.length ?? 0) - shownNames.length;
 
   return (
     <Stack space="space.150">
@@ -181,9 +260,35 @@ export const PeopleTable = ({
         </SectionMessage>
       )}
 
+      {people.length >= FILTER_FROM && (
+        <Stack space="space.050">
+          <Label labelFor={filterId}>Find in this table</Label>
+          <Textfield
+            id={filterId}
+            width={280}
+            value={query}
+            placeholder="Name or email"
+            onChange={(e) => setQuery(e.target.value)}
+          />
+          <HelperMessage>
+            {needle
+              ? `Showing ${visible.length} of ${people.length}. Ticks made before you typed are kept — everything about to be removed is listed in the confirmation.`
+              : 'Filters the rows below. Columns can also be sorted by clicking their headers.'}
+          </HelperMessage>
+        </Stack>
+      )}
+
       {people.length > 0 && (
         <Box>
-          <DynamicTable head={head} rows={rows} rowsPerPage={20} isLoading={isBusy} />
+          <DynamicTable
+            head={head}
+            rows={rows}
+            rowsPerPage={20}
+            isLoading={isBusy}
+            defaultSortKey="name"
+            defaultSortOrder="ASC"
+            emptyView={<Text>Nobody here matches “{query}”.</Text>}
+          />
         </Box>
       )}
 
@@ -197,14 +302,18 @@ export const PeopleTable = ({
         <Inline space="space.100" alignBlock="center">
           {addActions}
           {people.length > 0 && (
-            <LoadingButton
+            <Button
               appearance="danger"
-              isLoading={isBusy}
-              isDisabled={selected.size === 0}
-              onClick={() => mutate(() => onRemove([...selected]), { clearSelection: true })}
+              isDisabled={selected.size === 0 || isBusy}
+              onClick={() =>
+                setPendingRemoval({
+                  accountIds: [...selected],
+                  names: [...selected].map(nameOf),
+                })
+              }
             >
               Remove selected ({selected.size})
-            </LoadingButton>
+            </Button>
           )}
           {people.length > 0 && (
             <Button
@@ -217,6 +326,32 @@ export const PeopleTable = ({
           )}
         </Inline>
       )}
+
+      <ConfirmDialog
+        isOpen={pendingRemoval !== null}
+        title={
+          pendingRemoval?.accountIds.length === 1
+            ? 'Remove this person?'
+            : `Remove ${pendingRemoval?.accountIds.length} people?`
+        }
+        confirmLabel={
+          pendingRemoval?.accountIds.length === 1
+            ? 'Remove'
+            : `Remove ${pendingRemoval?.accountIds.length}`
+        }
+        isBusy={isBusy}
+        onConfirm={confirmRemoval}
+        onCancel={() => setPendingRemoval(null)}
+      >
+        <Stack space="space.100">
+          <Text>
+            Removing from “{title}”: {shownNames.join(', ')}
+            {hiddenNames > 0 ? ` and ${hiddenNames} more` : ''}.
+          </Text>
+          {removeWarning && <Text>{removeWarning}</Text>}
+          <Text>This can’t be undone — adding them back is a new search.</Text>
+        </Stack>
+      </ConfirmDialog>
     </Stack>
   );
 };

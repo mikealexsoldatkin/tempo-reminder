@@ -37,6 +37,7 @@ export const TrackedUsersTable = ({ users, managers, onUsersChange, addActions }
       title="Tracked users"
       people={users}
       addActions={addActions}
+      removeWarning="They stop being checked entirely: no reminders to them, and no mention in anyone’s digest or detailed report. The managers and the calendar name set for them are lost too."
       emptyMessage="The list is empty — no reminders will be sent. Use the buttons below to add users by name or by project key."
       onRemove={async (accountIds) =>
         onUsersChange(await api.removeTrackedUsers(accountIds).then((r) => r.users))

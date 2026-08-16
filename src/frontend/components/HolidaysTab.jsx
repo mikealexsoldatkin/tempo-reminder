@@ -24,6 +24,7 @@ import {
   xcss,
 } from '@forge/react';
 import { api } from '../api';
+import { ConfirmDialog } from './ConfirmDialog';
 
 // Select своей ширины не имеет и растягивается по родителю — задаём её обёрткой.
 const WIDE = xcss({ width: '220px' });
@@ -84,6 +85,9 @@ export const HolidaysTab = ({ holidays, settings, onHolidaysChange, onSettingsCh
   // было бы худшим из возможных ответов на опечатку.
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [addError, setAddError] = useState(null);
+  // «Restore defaults» — единственная кнопка здесь, которая стирает не строку, а
+  // весь список сразу, включая правила, которых во встроенном календаре нет.
+  const [isResetOpen, setIsResetOpen] = useState(false);
 
   const isFixed = form.type.value === 'fixed';
 
@@ -131,6 +135,11 @@ export const HolidaysTab = ({ holidays, settings, onHolidaysChange, onSettingsCh
     } finally {
       setIsBusy(false);
     }
+  };
+
+  const reset = async () => {
+    await mutate(() => api.resetHolidays(), 'Default calendar restored');
+    setIsResetOpen(false);
   };
 
   const openAdd = () => {
@@ -274,12 +283,33 @@ export const HolidaysTab = ({ holidays, settings, onHolidaysChange, onSettingsCh
           <LoadingButton
             appearance="subtle"
             isLoading={isBusy}
-            onClick={() => mutate(() => api.resetHolidays(), 'Default calendar restored')}
+            onClick={() => setIsResetOpen(true)}
           >
             Restore defaults
           </LoadingButton>
         </Inline>
       </Stack>
+
+      <ConfirmDialog
+        isOpen={isResetOpen}
+        title="Restore the default calendar?"
+        confirmLabel="Restore defaults"
+        appearance="warning"
+        isBusy={isBusy}
+        onConfirm={reset}
+        onCancel={() => setIsResetOpen(false)}
+      >
+        <Stack space="space.100">
+          <Text>
+            The whole list is replaced by the built-in calendar: every rule you added here
+            disappears, and every default one you removed comes back.
+          </Text>
+          <Text>
+            Right now the list holds {holidays.length} rule{holidays.length === 1 ? '' : 's'}. There
+            is no undo — the ones you added would have to be entered again by hand.
+          </Text>
+        </Stack>
+      </ConfirmDialog>
 
       <ModalTransition>
         {isAddOpen && (

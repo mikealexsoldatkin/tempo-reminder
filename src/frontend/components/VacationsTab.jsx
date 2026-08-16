@@ -3,6 +3,7 @@ import {
   Box,
   Checkbox,
   DynamicTable,
+  Form,
   Heading,
   HelperMessage,
   Inline,
@@ -15,6 +16,7 @@ import {
   Textfield,
 } from '@forge/react';
 import { api } from '../api';
+import { ConfirmDialog } from './ConfirmDialog';
 
 /**
  * Календарь отпусков. Отпускной день не долг: за него не спрашивают ни сотрудника,
@@ -29,6 +31,9 @@ export const VacationsTab = ({ settings, credentials, onSettingsChange, onCreden
   const [busy, setBusy] = useState(null);
   const [message, setMessage] = useState(null);
   const [test, setTest] = useState(null);
+  // Адрес живёт в секретном хранилище и обратно не читается: удалили — значит идти
+  // за ним в настройки календаря заново.
+  const [isClearOpen, setIsClearOpen] = useState(false);
 
   const status = credentials.vacationIcsUrl ?? { isSet: false };
 
@@ -44,22 +49,27 @@ export const VacationsTab = ({ settings, credentials, onSettingsChange, onCreden
     }
   };
 
-  const save = () =>
-    withBusy('save', async () => {
+  const save = () => {
+    // Enter в пустом поле форму отправляет, кнопка при этом заблокирована.
+    if (icsUrl.trim().length === 0) return undefined;
+    return withBusy('save', async () => {
       const result = await api.saveCredential('vacationIcsUrl', icsUrl);
       onCredentialsChange(result.credentials);
       setIcsUrl('');
       setTest(null);
       setMessage({ appearance: 'success', text: 'iCal address saved' });
     });
+  };
 
-  const clear = () =>
-    withBusy('clear', async () => {
+  const clear = async () => {
+    await withBusy('clear', async () => {
       const result = await api.clearCredential('vacationIcsUrl');
       onCredentialsChange(result.credentials);
       setTest(null);
       setMessage({ appearance: 'information', text: 'iCal address removed' });
     });
+    setIsClearOpen(false);
+  };
 
   const toggleSetting = (patch) =>
     withBusy('toggle', async () => {
@@ -117,32 +127,37 @@ export const VacationsTab = ({ settings, credentials, onSettingsChange, onCreden
             <Lozenge appearance="removed">not set</Lozenge>
           )}
         </Inline>
-        <Inline space="space.100" alignBlock="end">
-          <Textfield
-            id="vacation-ics-url"
-            type="password"
-            width={420}
-            value={icsUrl}
-            placeholder={status.isSet ? 'Enter a new address to replace it' : 'https://calendar.google.com/calendar/ical/…/basic.ics'}
-            onChange={(e) => setIcsUrl(e.target.value)}
-          />
-          <LoadingButton
-            appearance="primary"
-            isLoading={busy === 'save'}
-            isDisabled={icsUrl.trim().length === 0}
-            onClick={save}
-          >
-            Save
-          </LoadingButton>
-          <LoadingButton
-            appearance="subtle"
-            isLoading={busy === 'clear'}
-            isDisabled={!status.isSet}
-            onClick={clear}
-          >
-            Remove
-          </LoadingButton>
-        </Inline>
+        {/* Форма ради Enter: Textfield в UI Kit не принимает onKeyDown. */}
+        <Form onSubmit={save}>
+          <Inline space="space.100" alignBlock="end">
+            <Textfield
+              id="vacation-ics-url"
+              type="password"
+              width={420}
+              value={icsUrl}
+              placeholder={status.isSet ? 'Enter a new address to replace it' : 'https://calendar.google.com/calendar/ical/…/basic.ics'}
+              onChange={(e) => setIcsUrl(e.target.value)}
+            />
+            <LoadingButton
+              appearance="primary"
+              type="submit"
+              isLoading={busy === 'save'}
+              isDisabled={icsUrl.trim().length === 0}
+            >
+              Save
+            </LoadingButton>
+            {/* type="button": иначе кнопка внутри формы отправляет её. */}
+            <LoadingButton
+              appearance="subtle"
+              type="button"
+              isLoading={busy === 'clear'}
+              isDisabled={!status.isSet}
+              onClick={() => setIsClearOpen(true)}
+            >
+              Remove
+            </LoadingButton>
+          </Inline>
+        </Form>
         <HelperMessage>
           Google Calendar → the vacation calendar → Settings → Integrate calendar → “Secret address
           in iCal format”. Anyone holding this link can read the calendar, so it is stored in Forge
@@ -171,6 +186,27 @@ export const VacationsTab = ({ settings, credentials, onSettingsChange, onCreden
           <Text>{message.text}</Text>
         </SectionMessage>
       )}
+
+      <ConfirmDialog
+        isOpen={isClearOpen}
+        title="Remove the iCal address?"
+        confirmLabel="Remove address"
+        isBusy={busy === 'clear'}
+        onConfirm={clear}
+        onCancel={() => setIsClearOpen(false)}
+      >
+        <Stack space="space.100">
+          <Text>
+            The address is kept in Forge secret storage and is never shown back, so nothing here can
+            restore it — you would have to copy it from the calendar settings again.
+          </Text>
+          <Text>
+            {settings.skipVacations
+              ? 'The vacation switch stays on, so runs will keep saying that vacations were ignored.'
+              : 'Vacations are already off, so runs are unaffected until you turn them back on.'}
+          </Text>
+        </Stack>
+      </ConfirmDialog>
     </Stack>
   );
 };
