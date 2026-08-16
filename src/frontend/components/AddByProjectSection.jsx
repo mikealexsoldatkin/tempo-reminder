@@ -9,6 +9,10 @@ import { candidateActions } from './candidateActions';
  * Пакетное добавление по ключу проекта — аналог прежнего getProjectPeople():
  * подтягиваем всех, кого можно назначить на задачи проекта, и добавляем батчем.
  *
+ * Действие здесь только одно, «под наблюдение»: окно открывается из таблицы
+ * Tracked users, и целым проектом менеджеров не назначают — их отмечают поштучно
+ * поиском по имени.
+ *
  * Заголовка у секции нет намеренно: она живёт в модальном окне (см.
  * AddPeopleActions), и название ей даёт ModalTitle.
  */
@@ -48,6 +52,7 @@ export const AddByProjectSection = ({ trackedIds, managerIds, onUsersChange, onM
 
       <CandidateResults
         search={search}
+        action="track"
         trackedIds={trackedIds}
         managerIds={managerIds}
         showRoles

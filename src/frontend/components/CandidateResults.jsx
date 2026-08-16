@@ -3,14 +3,25 @@ import { Button, Inline, LoadingButton, SectionMessage, Stack, Text } from '@for
 import { CandidateTable } from './CandidateTable';
 
 /**
- * Результаты поиска и действия над отмеченными — общий блок для поиска по имени
+ * Результаты поиска и действие над отмеченными — общий блок для поиска по имени
  * и по ключу проекта: обе секции отличаются только тем, как ищут людей.
  *
- * Выделение одно на оба действия и после каждого сохраняется: один и тот же человек
- * может быть и отслеживаемым, и менеджером, поэтому «поставить под наблюдение» и
- * «назначить менеджером» можно нажать подряд, не отмечая его заново.
+ * Действие ровно одно и задаётся тем, откуда окно открыли: из таблицы Managers
+ * человек добавляется в менеджеры, из Tracked users — под наблюдение. Показывать
+ * обе кнопки сразу значило бы спрашивать то, на что кнопка «Add manager» уже
+ * ответила, поэтому кнопка называется просто «Add» — что именно она делает,
+ * сказано в заголовке окна.
+ *
+ * Выделение после действия сохраняется: повторное добавление безопасно, а сбрасывать
+ * отметки у списка, который пользователь ещё разглядывает, незачем.
  */
-export const CandidateResults = ({ search, trackedIds, managerIds, showRoles = false }) => {
+export const CandidateResults = ({
+  search,
+  action,
+  trackedIds,
+  managerIds,
+  showRoles = false,
+}) => {
   if (search.message && !(search.candidates && search.candidates.length > 0)) {
     return (
       <SectionMessage appearance={search.message.appearance}>
@@ -41,18 +52,11 @@ export const CandidateResults = ({ search, trackedIds, managerIds, showRoles = f
       <Inline space="space.100">
         <LoadingButton
           appearance="primary"
-          isLoading={search.busyAction === 'track'}
+          isLoading={search.busyAction === action}
           isDisabled={search.selected.size === 0 || search.busyAction !== null}
-          onClick={() => search.submitSelected('track')}
+          onClick={() => search.submitSelected(action)}
         >
-          Track ({search.selected.size})
-        </LoadingButton>
-        <LoadingButton
-          isLoading={search.busyAction === 'manager'}
-          isDisabled={search.selected.size === 0 || search.busyAction !== null}
-          onClick={() => search.submitSelected('manager')}
-        >
-          Mark as a manager ({search.selected.size})
+          Add ({search.selected.size})
         </LoadingButton>
         <Button appearance="subtle" onClick={search.selectAll}>
           Select all

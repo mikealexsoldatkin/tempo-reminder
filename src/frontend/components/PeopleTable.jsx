@@ -59,6 +59,9 @@ const EmailCell = ({ email, onConfirm }) => (
  * @param {boolean} [props.showContact] показывать ли email и найденный Slack-id.
  *   Выключается там, где сообщение уходит не самому человеку: пустая колонка «Slack»
  *   у того, кому и не пишут, читалась бы как ненайденный аккаунт.
+ * @param {JSX.Element} [props.addActions] кнопки добавления людей — они встают в
+ *   тот же ряд, что «Remove selected» и «Clear selection», первыми. Ряд поэтому
+ *   рисуется и у пустой таблицы: иначе добавлять в неё было бы нечем.
  */
 export const PeopleTable = ({
   title,
@@ -68,6 +71,7 @@ export const PeopleTable = ({
   onSetEmail,
   extraColumns = [],
   showContact = true,
+  addActions = null,
 }) => {
   const [selected, setSelected] = useState(new Set());
   const [isBusy, setIsBusy] = useState(false);
@@ -189,19 +193,28 @@ export const PeopleTable = ({
         </SectionMessage>
       )}
 
-      {people.length > 0 && (
-        <Inline space="space.100">
-          <LoadingButton
-            appearance="danger"
-            isLoading={isBusy}
-            isDisabled={selected.size === 0}
-            onClick={() => mutate(() => onRemove([...selected]), { clearSelection: true })}
-          >
-            Remove selected ({selected.size})
-          </LoadingButton>
-          <Button appearance="subtle" isDisabled={selected.size === 0} onClick={() => setSelected(new Set())}>
-            Clear selection
-          </Button>
+      {(addActions || people.length > 0) && (
+        <Inline space="space.100" alignBlock="center">
+          {addActions}
+          {people.length > 0 && (
+            <LoadingButton
+              appearance="danger"
+              isLoading={isBusy}
+              isDisabled={selected.size === 0}
+              onClick={() => mutate(() => onRemove([...selected]), { clearSelection: true })}
+            >
+              Remove selected ({selected.size})
+            </LoadingButton>
+          )}
+          {people.length > 0 && (
+            <Button
+              appearance="subtle"
+              isDisabled={selected.size === 0}
+              onClick={() => setSelected(new Set())}
+            >
+              Clear selection
+            </Button>
+          )}
         </Inline>
       )}
     </Stack>

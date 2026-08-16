@@ -104,40 +104,43 @@ const AdminPage = () => {
 
         <TabPanel>
           <Box paddingBlockStart="space.200">
-            {/* Поиск людей уехал во всплывающие окна: обе формы нужны редко, а
-                места над таблицами занимали столько, что списки уходили под сгиб.
-                Кнопки стоят под каждой таблицей — окно всё равно одно и то же и
-                умеет оба действия, так что открывать его удобно оттуда, где сейчас
-                смотришь. */}
+            {/* Поиск людей уехал во всплывающие окна: формы нужны редко, а места
+                над таблицами занимали столько, что списки уходили под сгиб. Кнопки
+                отдаются таблице и встают в её собственный ряд действий, рядом с
+                «Remove selected». Каждая таблица пополняется только собой: в
+                менеджеры добавляют поиском по имени, под наблюдение — ещё и целым
+                проектом. */}
             <Stack space="space.400">
               {/* Менеджеры идут первыми: колонки в Tracked users выбирают из этого
                   списка, и пустой он делает их нередактируемыми. */}
-              <Stack space="space.200">
-                <ManagersTable
-                  managers={state.managers}
-                  onManagersChange={onManagersChange}
-                  onUsersChange={onUsersChange}
-                />
-                <AddPeopleActions
-                  trackedIds={trackedIds}
-                  managerIds={managerIds}
-                  onUsersChange={onUsersChange}
-                  onManagersChange={onManagersChange}
-                />
-              </Stack>
-              <Stack space="space.200">
-                <TrackedUsersTable
-                  users={state.trackedUsers}
-                  managers={state.managers}
-                  onUsersChange={onUsersChange}
-                />
-                <AddPeopleActions
-                  trackedIds={trackedIds}
-                  managerIds={managerIds}
-                  onUsersChange={onUsersChange}
-                  onManagersChange={onManagersChange}
-                />
-              </Stack>
+              <ManagersTable
+                managers={state.managers}
+                onManagersChange={onManagersChange}
+                onUsersChange={onUsersChange}
+                addActions={
+                  <AddPeopleActions
+                    action="manager"
+                    trackedIds={trackedIds}
+                    managerIds={managerIds}
+                    onUsersChange={onUsersChange}
+                    onManagersChange={onManagersChange}
+                  />
+                }
+              />
+              <TrackedUsersTable
+                users={state.trackedUsers}
+                managers={state.managers}
+                onUsersChange={onUsersChange}
+                addActions={
+                  <AddPeopleActions
+                    action="track"
+                    trackedIds={trackedIds}
+                    managerIds={managerIds}
+                    onUsersChange={onUsersChange}
+                    onManagersChange={onManagersChange}
+                  />
+                }
+              />
             </Stack>
           </Box>
         </TabPanel>

@@ -1,14 +1,12 @@
 import React, { useState } from 'react';
 import {
   Button,
-  Inline,
   Modal,
   ModalBody,
   ModalFooter,
   ModalHeader,
   ModalTitle,
   ModalTransition,
-  Stack,
 } from '@forge/react';
 import { AddByNameSection } from './AddByNameSection';
 import { AddByProjectSection } from './AddByProjectSection';
@@ -21,46 +19,74 @@ import { AddByProjectSection } from './AddByProjectSection';
  * Поэтому на странице остаются только кнопки, а поиск с таблицей кандидатов
  * открывается поверх неё.
  *
- * Ряд кнопок ставится под каждой из таблиц: добавление из любого окна умеет и
- * поставить под наблюдение, и назначить менеджером, так что кнопка рядом с той
- * таблицей, которую пользователь сейчас заполняет, избавляет от прокрутки к другой.
+ * Компонент возвращает фрагмент, а не свою обёртку: кнопки встают прямо в ряд
+ * действий таблицы (PeopleTable), рядом с «Remove selected» и «Clear selection», —
+ * это один и тот же ряд, а не вторая строка под ним.
+ *
+ * `action` — куда добавляем; он же решает и набор кнопок. У менеджеров это только
+ * поиск по имени: целым проектом менеджеров не назначают. Внутри окна выбора уже
+ * нет — кнопка там называется просто «Add».
  *
  * Состояние поиска живёт внутри секций и умирает вместе с окном — закрыл, значит
  * начал заново. Добавленные люди при этом уже уехали наверх через onUsersChange
  * и onManagersChange, и таблицы под окном обновляются сразу.
  */
 const DIALOGS = {
-  name: { title: 'Search by name', Section: AddByNameSection },
-  project: { title: 'Add project members', Section: AddByProjectSection },
+  manager: [{ key: 'name', label: 'Add managers' }],
+  track: [
+    { key: 'name', label: 'Add users' },
+    { key: 'project', label: 'Add project members' },
+  ],
 };
 
-export const AddPeopleActions = ({ trackedIds, managerIds, onUsersChange, onManagersChange }) => {
+export const AddPeopleActions = ({
+  action,
+  trackedIds,
+  managerIds,
+  onUsersChange,
+  onManagersChange,
+}) => {
   const [openKey, setOpenKey] = useState(null);
   const close = () => setOpenKey(null);
-  const Section = openKey ? DIALOGS[openKey].Section : null;
+
+  const dialogs = DIALOGS[action];
+  const open = dialogs.find((dialog) => dialog.key === openKey);
 
   return (
-    <Stack space="space.100">
-      <Inline space="space.100">
-        <Button appearance="primary" onClick={() => setOpenKey('name')}>
-          Search by name
+    <>
+      {dialogs.map((dialog, index) => (
+        <Button
+          key={dialog.key}
+          appearance={index === 0 ? 'primary' : 'default'}
+          onClick={() => setOpenKey(dialog.key)}
+        >
+          {dialog.label}
         </Button>
-        <Button onClick={() => setOpenKey('project')}>Add project members</Button>
-      </Inline>
+      ))}
 
       <ModalTransition>
-        {openKey && (
+        {open && (
           <Modal width="x-large" onClose={close}>
             <ModalHeader>
-              <ModalTitle>{DIALOGS[openKey].title}</ModalTitle>
+              <ModalTitle>{open.label}</ModalTitle>
             </ModalHeader>
             <ModalBody>
-              <Section
-                trackedIds={trackedIds}
-                managerIds={managerIds}
-                onUsersChange={onUsersChange}
-                onManagersChange={onManagersChange}
-              />
+              {open.key === 'name' ? (
+                <AddByNameSection
+                  action={action}
+                  trackedIds={trackedIds}
+                  managerIds={managerIds}
+                  onUsersChange={onUsersChange}
+                  onManagersChange={onManagersChange}
+                />
+              ) : (
+                <AddByProjectSection
+                  trackedIds={trackedIds}
+                  managerIds={managerIds}
+                  onUsersChange={onUsersChange}
+                  onManagersChange={onManagersChange}
+                />
+              )}
             </ModalBody>
             <ModalFooter>
               <Button appearance="subtle" onClick={close}>
@@ -70,6 +96,6 @@ export const AddPeopleActions = ({ trackedIds, managerIds, onUsersChange, onMana
           </Modal>
         )}
       </ModalTransition>
-    </Stack>
+    </>
   );
 };

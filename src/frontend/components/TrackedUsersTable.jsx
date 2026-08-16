@@ -31,11 +31,12 @@ const CalendarNameCell = ({ user, onConfirm }) => (
  * Наборы не связаны: можно заполнить любой, оба или ни одного — на личное
  * напоминание самому сотруднику это не влияет.
  */
-export const TrackedUsersTable = ({ users, managers, onUsersChange }) => (
+export const TrackedUsersTable = ({ users, managers, onUsersChange, addActions }) => (
   <Stack space="space.100">
     <PeopleTable
       title="Tracked users"
       people={users}
+      addActions={addActions}
       emptyMessage="The list is empty — no reminders will be sent. Use the buttons below to add users by name or by project key."
       onRemove={async (accountIds) =>
         onUsersChange(await api.removeTrackedUsers(accountIds).then((r) => r.users))

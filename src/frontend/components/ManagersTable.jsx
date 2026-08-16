@@ -12,11 +12,12 @@ import { PeopleTable } from './PeopleTable';
  * Удаление менеджера снимает его с сотрудников в обоих наборах получателей,
  * поэтому ответ приносит оба обновлённых списка.
  */
-export const ManagersTable = ({ managers, onManagersChange, onUsersChange }) => (
+export const ManagersTable = ({ managers, onManagersChange, onUsersChange, addActions }) => (
   <PeopleTable
     title="Managers"
     people={managers}
-    emptyMessage="No managers yet — nobody will get the digests or the detailed reports. Use the buttons below to find people, then “Mark as a manager”."
+    addActions={addActions}
+    emptyMessage="No managers yet — nobody will get the digests or the detailed reports. Add them with the “Add managers” button below."
     onRemove={async (accountIds) => {
       const result = await api.removeManagers(accountIds);
       onManagersChange(result.managers);
