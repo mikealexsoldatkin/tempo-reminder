@@ -18,6 +18,7 @@
 | `src/backend/oauthPage.js` | страница «готово / не вышло», которую видит браузер после обоих колбэков |
 | `docs/slack-callback/index.html` | статическая страница-переходник, куда Slack возвращает браузер |
 | `docs/slack-app-manifest.json` | готовый манифест Slack-приложения (Create New App → From a manifest) |
+| `docs/marketplace-listing.md` | тексты листинга Atlassian Marketplace по полям формы |
 | `src/backend/reminder.js` | сам прогон проверки |
 | `src/backend/workdays.js` / `holidays.js` | окно рабочих дней и календарь праздников (правила → даты) |
 | `src/backend/dailyReport.js` | детальный отчёт: разбор окна по дням |
