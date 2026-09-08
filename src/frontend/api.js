@@ -32,6 +32,10 @@ export const api = {
   getSlackStatus: () => call('getSlackStatus'),
   disconnectSlack: () => call('disconnectSlack'),
   startTempoConnect: () => call('startTempoConnect'),
+  getTempoSetup: () => call('getTempoSetup'),
+  saveTempoOAuthApp: (clientId, clientSecret) =>
+    call('saveTempoOAuthApp', { clientId, clientSecret }),
+  clearTempoOAuthApp: () => call('clearTempoOAuthApp'),
   getTempoStatus: () => call('getTempoStatus'),
   disconnectTempo: () => call('disconnectTempo'),
   testConnections: () => call('testConnections'),

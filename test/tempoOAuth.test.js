@@ -9,6 +9,7 @@ import {
   isTempoAuthError,
   needsRefresh,
   normalizeJiraUrl,
+  pickTempoOAuthClient,
   tempoErrorHint,
 } from '../src/backend/tempoOAuthState.js';
 
@@ -126,7 +127,9 @@ test('запас на обновление больше суток: между �
 /* ---------------------------------- ошибки ---------------------------------- */
 
 test('известные ошибки OAuth объясняются словами, незнакомые — нет', () => {
-  assert.match(tempoErrorHint('invalid_client'), /TEMPO_CLIENT_ID/);
+  // Самая частая причина invalid_client — приложение, заведённое не в том Tempo;
+  // подсказка обязана называть именно её, а не переменные окружения сборки.
+  assert.match(tempoErrorHint('invalid_client'), /different Jira site/i);
   assert.match(tempoErrorHint('invalid_request'), /redirect/i);
   assert.equal(tempoErrorHint('something_new'), null);
   assert.equal(tempoErrorHint(undefined), null);
@@ -139,4 +142,48 @@ test('отказ в доступе отличается от прочих бед
   assert.equal(isTempoAuthError('Tempo 500: gateway'), false);
   assert.equal(isTempoAuthError('Tempo 429: too many requests'), false);
   assert.equal(isTempoAuthError(undefined), false);
+});
+
+/* --------------------- чьё OAuth-приложение используется --------------------- */
+
+const APP = { clientId: 'own-id', clientSecret: 'own-secret' };
+const VENDOR = { clientId: 'vendor-id', clientSecret: 'vendor-secret' };
+
+test('приложение установки перекрывает вендорское', () => {
+  const client = pickTempoOAuthClient({ stored: APP, deployment: VENDOR });
+  assert.deepEqual(client, { ...APP, available: true, source: 'installation' });
+});
+
+test('без приложения установки берутся переменные сборки', () => {
+  const client = pickTempoOAuthClient({ stored: {}, deployment: VENDOR });
+  assert.deepEqual(client, { ...VENDOR, available: true, source: 'deployment' });
+});
+
+// Половина от одного приложения с половиной от другого дала бы invalid_client уже
+// после экрана согласия — то есть там, где причину не видно.
+test('неполная пара источником не считается и не смешивается с другим', () => {
+  const half = { clientId: 'own-id', clientSecret: '   ' };
+  assert.deepEqual(pickTempoOAuthClient({ stored: half, deployment: VENDOR }), {
+    ...VENDOR,
+    available: true,
+    source: 'deployment',
+  });
+  assert.equal(pickTempoOAuthClient({ stored: half, deployment: {} }).available, false);
+});
+
+test('нет ни того ни другого — подключаться нечем', () => {
+  assert.deepEqual(pickTempoOAuthClient(), {
+    clientId: null,
+    clientSecret: null,
+    available: false,
+    source: null,
+  });
+});
+
+test('пробелы по краям вставленного значения срезаются', () => {
+  const client = pickTempoOAuthClient({
+    stored: { clientId: '  own-id\n', clientSecret: ' own-secret ' },
+  });
+  assert.equal(client.clientId, 'own-id');
+  assert.equal(client.clientSecret, 'own-secret');
 });

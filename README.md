@@ -375,11 +375,12 @@ calendar). Ни OAuth, ни сервисного аккаунта, ни прое
    npm install -g @forge/cli
    forge login          # email + Atlassian API token
    ```
-2. **Slack и Tempo** подключаются кнопками на странице настроек; чтобы кнопки появились, у сборки
-   должны быть заданы переменные `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET`, `SLACK_REDIRECT_URI` и
-   `TEMPO_CLIENT_ID`, `TEMPO_CLIENT_SECRET` — см. [«Подключение Slack»](#подключение-slack) и
-   [«Подключение Tempo»](#подключение-tempo). Без этих переменных подключиться нельзя вовсе:
-   других путей в UI нет.
+2. **Slack** подключается кнопкой; чтобы кнопка появилась, у сборки должны быть заданы переменные
+   `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET`, `SLACK_REDIRECT_URI` — см.
+   [«Подключение Slack»](#подключение-slack). **Tempo** от сборки не зависит: OAuth-приложение
+   Tempo принадлежит инстансу, поэтому его заводит администратор установки — мастером на вкладке
+   «Connections», см. [«Подключение Tempo»](#подключение-tempo). Других путей подключения в UI
+   нет ни у того, ни у другого.
 3. Опционально — **«Secret address in iCal format»** корпоративного календаря отпусков, если
    отпуска нужно учитывать (вкладка «Vacations»).
 
@@ -541,28 +542,56 @@ Jira, — одноразовый `nonce`: он рождается в резол�
 Если у него заберут права или доступ отзовут в Tempo, приложение узнает об этом по 401/403 на
 прогоне: подключение помечается сломанным, вкладка и сводка готовности зовут подключиться заново.
 
-### Что настраивается один раз, при сборке приложения
+### Что настраивается один раз, в каждой установке
 
-1. **Адрес возврата.** Он нужен раньше OAuth-приложения, а появляется только после установки:
-   ```bash
-   forge webtrigger      # выбрать установку и модуль tempo-oauth-callback
-   ```
-   Ответ вида `https://<id>.webtrigger.atlassian.app/public/<token>` — это и есть Redirect URI.
-2. **OAuth-приложение в Tempo**: **Tempo → Settings → Data Access → OAuth 2.0 Applications → Add**.
-   - **Redirect URI** — адрес из шага 1 (по одному приложению на окружение, если dev и production
-     живут раздельно: адреса у них разные);
-   - **Client type** — Confidential: `client_secret` хранится на бэкенде Forge и в браузер не попадает;
-   - **Authorization grant type** — Authorization code.
+Здесь Tempo устроен принципиально иначе, чем Slack, и это не выбор автора. **OAuth-приложение
+Tempo принадлежит инстансу, в котором его завели**: его `client_id` существует только в Tempo
+этого сайта, и экран согласия ищет клиента по `jira_url` — приложение, зарегистрированное где-то
+ещё, отвечает `Invalid client id`. Одного вендорского приложения на всех клиентов не бывает
+(у Slack — бывает, это Public Distribution), а API, которым можно было бы завести приложение за
+администратора, у Tempo нет. Значит, своё приложение заводит каждый, кто ставит это приложение.
 
-   После **Add** Tempo покажет Client ID и Client Secret.
-3. **Переменные окружения Forge**:
-   ```bash
-   forge variables set          TEMPO_CLIENT_ID     <client id>
-   forge variables set --encrypt TEMPO_CLIENT_SECRET <client secret>
-   forge deploy   # переменные подхватываются только следующим деплоем
-   ```
-   Без них подключиться нельзя вообще: вкладка честно говорит, что реквизитов OAuth-приложения
-   у этой сборки нет, и зовёт задать переменные — вводить токен руками страница не предлагает.
+Делается это на вкладке **Connections**, мастером: пока приложения нет, вместо кнопки
+«Connect Tempo» вкладка показывает четыре шага и два поля. Целиком — минута:
+
+1. **Ссылка** ведёт прямо на вкладку **Data Access → OAuth 2.0 Applications** в Tempo этого сайта
+   (хост берётся из `getJiraBaseUrl()`, путь — константа `TEMPO_OAUTH_APPS_PATH`: два UUID в нём —
+   это id приложения Tempo и его окружения на Forge, одни на все установки). Дальше — **Add**.
+2. **Client type** — Confidential (`client_secret` хранится на бэкенде Forge и в браузер не
+   попадает), **Authorization grant type** — Authorization code.
+3. **Redirect URI** мастер показывает готовым — это веб-триггер именно этой установки, и своими
+   руками его добывать (`forge webtrigger`) больше не нужно. У каждой установки он свой: адрес
+   веб-триггера содержит id установки и случайный токен.
+4. **Add**, и показанные Tempo Client ID и Client Secret вставляются в два поля мастера.
+
+Пара уезжает в секретное хранилище Forge (`kvs.setSecret`, ключи `tempo-client-id` и
+`tempo-client-secret`) и наружу не возвращается — вкладка показывает только «задано» и хвост.
+Дальше начинается обычный путь: **Connect Tempo** → Authorize → приложение получает свой токен и
+продлевает его само. В настройки Tempo после этого не возвращаются.
+
+Заданное приложение вкладка сворачивает в одну строку с кнопками **Replace** и **Forget**.
+«Forget» стирает только реквизиты; выданный ими access-токен работает до конца срока, но продлить
+его уже нечем — об этом там же и сказано.
+
+**Переменные окружения сборки** остаются вторым источником и работают как раньше:
+
+```bash
+forge variables set          TEMPO_CLIENT_ID     <client id>
+forge variables set --encrypt TEMPO_CLIENT_SECRET <client secret>
+forge deploy   # переменные подхватываются только следующим деплоем
+```
+
+Они годятся для своей сборки на один инстанс — и в них же ляжет вендорский клиент, если Tempo
+такой когда-нибудь выдаст (у eazyBI он есть: там клиент видит только кнопку «Authorize Tempo»,
+без всякого мастера). Приложение установки старше: правило выбора — `pickTempoOAuthClient`, и
+берётся источник **только целиком**, потому что половина одной пары с половиной другой дала бы
+`invalid_client` уже после экрана согласия, где причину не видно.
+
+Отдельно про вендорский клиент, если он появится: `redirect_uri` Tempo сверяет с
+зарегистрированными, а адрес веб-триггера свой у каждой установки — зарегистрировать их все
+нельзя. Понадобится либо wildcard `https://*.webtrigger.atlassian.app/`, либо статическая
+страница-переходник, как у Slack (с передачей адреса назначения через localStorage: `state` Tempo
+возвращать не обещает).
 
 ### Установки, где токен вставляли руками
 
@@ -583,15 +612,20 @@ forge variables set --encrypt SLACK_CLIENT_SECRET <client secret>
 forge variables set          SLACK_REDIRECT_URI  https://<домен>/slack-callback/
 forge deploy
 forge install     # выбрать Jira и указать сайт
+```
 
+Tempo второго захода не требует: OAuth-приложение Tempo принадлежит инстансу, а не сборке, поэтому
+его заводит администратор установки — мастером на вкладке **Connections**, который сам показывает
+и адрес возврата, и ссылку в настройки Tempo (см. «Подключение Tempo»). Переменные
+`TEMPO_CLIENT_ID` и `TEMPO_CLIENT_SECRET` остаются запасным источником для своей сборки на один
+инстанс:
+
+```bash
 forge webtrigger  # адрес модуля tempo-oauth-callback — Redirect URI для Tempo
-forge variables set          TEMPO_CLIENT_ID     <client id>       # см. «Подключение Tempo»
+forge variables set          TEMPO_CLIENT_ID     <client id>
 forge variables set --encrypt TEMPO_CLIENT_SECRET <client secret>
 forge deploy
 ```
-
-Порядок здесь не случаен: Redirect URI для OAuth-приложения Tempo — это адрес веб-триггера, а он
-появляется только после установки. Поэтому Tempo настраивается вторым заходом.
 
 Если приложение уже установлено, а в `manifest.yml` добавились scope'ы или модули, после
 `forge deploy` обязателен **`forge install --upgrade`**: новые права требуют подтверждения
@@ -686,4 +720,3 @@ forge deploy
 - [Web trigger API (`webTrigger.getUrl`) — Forge](https://developer.atlassian.com/platform/forge/runtime-reference/web-trigger-api/)
 - [External authentication — Forge](https://developer.atlassian.com/platform/forge/runtime-reference/external-fetch-api/)
 - [`forge variables set` — Forge CLI](https://developer.atlassian.com/platform/forge/cli-reference/variables-set/)
-- [Приложение «Tempo Reminder» в workspace americor](https://americor.slack.com/marketplace/A0BL9AG1SHZ-tempo-reminder?settings=1)

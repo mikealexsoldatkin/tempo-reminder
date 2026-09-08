@@ -5,10 +5,13 @@ import { testSlackToken } from './slack.js';
 import { disconnectSlack, getSlackStatus, startSlackConnect } from './slackOAuth.js';
 import { isRevokedTokenError } from './slackOAuthState.js';
 import {
+  clearTempoOAuthApp,
   disconnectTempo,
   getTempoAccessToken,
+  getTempoSetup,
   getTempoStatus,
   noteTempoCheck,
+  saveTempoOAuthApp,
   startTempoConnect,
 } from './tempoOAuth.js';
 import { testVacationCalendar } from './vacationCalendar.js';
@@ -257,6 +260,24 @@ define('getTempoStatus', async () => ({
   tempo: await getTempoStatus(),
   credentials: await getCredentialsStatus(),
 }));
+
+/**
+ * Что вписать в Tempo при заведении OAuth-приложения. Отдельной ручкой, а не
+ * полем общего состояния: за адресом возврата и адресом инстанса приходится
+ * сходить в платформу и в Jira, а нужны они одному экрану, который открывают
+ * один раз за всю жизнь установки — платить за них загрузкой каждой вкладки не за что.
+ */
+define('getTempoSetup', () => getTempoSetup());
+
+define('saveTempoOAuthApp', async ({ payload }) => {
+  await saveTempoOAuthApp(payload ?? {});
+  return accessState();
+});
+
+define('clearTempoOAuthApp', async () => {
+  await clearTempoOAuthApp();
+  return accessState();
+});
 
 define('disconnectTempo', async () => {
   const revoked = await disconnectTempo();

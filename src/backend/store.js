@@ -34,6 +34,14 @@ const LEGACY_DETAILED_USERS_KEY = 'detailed-users';
 
 const SECRET_KEY = {
   tempoToken: 'tempo-token',
+  // Реквизиты OAuth-приложения Tempo. Лежат в установке, а не в переменных
+  // сборки, потому что OAuth-приложение Tempo принадлежит инстансу, в котором
+  // его создали: одно вендорское на всех тут невозможно, и каждый клиент заводит
+  // своё. Client id секретом не является, но живёт рядом с secret'ом — пара
+  // задаётся и стирается вместе, и разносить её по двум хранилищам значило бы
+  // научиться переживать их расхождение.
+  tempoClientId: 'tempo-client-id',
+  tempoClientSecret: 'tempo-client-secret',
   slackBotToken: 'slack-bot-token',
   // «Secret address in iCal format» календаря отпусков: ссылка сама себе пароль,
   // поэтому хранится там же, где токены, и наружу не отдаётся.

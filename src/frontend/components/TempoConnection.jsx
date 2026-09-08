@@ -14,6 +14,7 @@ import { router } from '@forge/bridge';
 import { api } from '../api';
 import { formatInstant } from '../formatTime';
 import { ConfirmDialog } from './ConfirmDialog';
+import { TempoAppSetup } from './TempoAppSetup';
 
 // Пока администратор ходит по вкладке Tempo, подключение приезжает не в ответ на
 // действие в UI, а через веб-триггер — заметить его можно только опросом.
@@ -24,6 +25,11 @@ const WAIT_LIMIT_MS = 3 * 60 * 1000;
 
 /**
  * Подключение Tempo.
+ *
+ * Подключение двухшаговое, и первый шаг проходят один раз за жизнь установки:
+ * OAuth-приложение Tempo принадлежит инстансу, в котором его завели, поэтому
+ * своё приложение заводит каждый — за этим следит TempoAppSetup. Дальше всё как
+ * у Slack.
  *
  * Кнопка ведёт на экран согласия Tempo в соседней вкладке; вернувшись оттуда,
  * приложение само кладёт токен в секретное хранилище и дальше продлевает его
@@ -181,8 +187,8 @@ export const TempoConnection = ({ tempo, credentials, testResult, onResult, onMe
         </SectionMessage>
       )}
 
-      {oauthAvailable ? (
-        <Stack space="space.100">
+      <Stack space="space.100">
+        {oauthAvailable && (
           <Inline space="space.100" alignBlock="center">
             <LoadingButton
               appearance={isConnected && !isBroken ? 'default' : 'primary'}
@@ -201,24 +207,19 @@ export const TempoConnection = ({ tempo, credentials, testResult, onResult, onMe
               Disconnect
             </LoadingButton>
           </Inline>
+        )}
+        {oauthAvailable && (
           <HelperMessage>
             Tempo grants access with your own permissions, so authorize as somebody who may view
             everybody’s worklogs — otherwise people whose time you can’t see look like they never
             logged any.
           </HelperMessage>
-        </Stack>
-      ) : (
-        // Другого пути в UI нет, поэтому молчать здесь нельзя: без кнопки вкладка
-        // выглядела бы так, будто Tempo подключать нечем в принципе.
-        <SectionMessage appearance="warning" title="Tempo can’t be connected in this build">
-          <Text>
-            The Tempo OAuth credentials (TEMPO_CLIENT_ID, TEMPO_CLIENT_SECRET) are not set for this
-            deployment, so there is nothing to connect to. Register an OAuth 2.0 application in
-            Tempo → Settings → Data Access, set the variables with “forge variables set” and deploy
-            again — see the README.
-          </Text>
-        </SectionMessage>
-      )}
+        )}
+        {/* Разовая настройка приложения Tempo. Задано — здесь одна строка о том,
+            чьё приложение используется; не задано — мастер, потому что до него
+            кнопке подключения взяться неоткуда. */}
+        <TempoAppSetup tempo={tempo} onResult={onResult} onMessage={onMessage} />
+      </Stack>
 
       <ConfirmDialog
         isOpen={isConfirmingDisconnect}

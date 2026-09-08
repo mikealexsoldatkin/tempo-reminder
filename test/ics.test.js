@@ -3,7 +3,7 @@ import test from 'node:test';
 import { eventDays, parseIcs } from '../src/backend/ics.js';
 
 const feed = (...lines) =>
-  ['BEGIN:VCALENDAR', 'VERSION:2.0', 'X-WR-CALNAME:Americor vacations', ...lines, 'END:VCALENDAR'].join('\r\n');
+  ['BEGIN:VCALENDAR', 'VERSION:2.0', 'X-WR-CALNAME:Vacations', ...lines, 'END:VCALENDAR'].join('\r\n');
 
 const vevent = (...lines) => ['BEGIN:VEVENT', ...lines, 'END:VEVENT'];
 
@@ -21,7 +21,7 @@ test('событие на весь день: DTEND исключительный,
     )
   );
 
-  assert.equal(calendarName, 'Americor vacations');
+  assert.equal(calendarName, 'Vacations');
   assert.deepEqual(events, [
     {
       uid: 'abc@google.com',

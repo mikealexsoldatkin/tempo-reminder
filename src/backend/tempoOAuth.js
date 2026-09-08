@@ -12,11 +12,13 @@ import {
   getTempoConnection,
   getTempoRefreshToken,
   markTempoConnectionBroken,
+  saveCredential,
   saveTempoOAuthTokens,
   startPendingTempoConnect,
 } from './store.js';
 import {
   STATE_TTL_MS,
+  TEMPO_OAUTH_APPS_PATH,
   TEMPO_REVOKE_URL,
   TEMPO_TOKEN_URL,
   buildTempoAuthorizeUrl,
@@ -24,6 +26,7 @@ import {
   expiresAtFrom,
   isTempoAuthError,
   needsRefresh,
+  pickTempoOAuthClient,
   tempoErrorHint,
 } from './tempoOAuthState.js';
 
@@ -59,20 +62,73 @@ const CLIENT_SECRET = 'TEMPO_CLIENT_SECRET';
 const CALLBACK_MODULE_KEY = 'tempo-oauth-callback';
 
 /**
- * Настройки OAuth живут в зашифрованных переменных окружения Forge — они общие на
- * все установки и наружу не отдаются. Своя сборка без них тоже должна работать:
- * просто без кнопки, со вставкой токена руками, поэтому их отсутствие — не ошибка,
- * а выключенная возможность.
+ * Реквизиты OAuth-приложения Tempo, которым подключается эта установка.
+ *
+ * Их два источника, и главный — приложение, заведённое администратором в своём
+ * Tempo: одного вендорского на всех не бывает, потому что OAuth-приложение Tempo
+ * принадлежит инстансу, где его создали. Переменные окружения сборки остаются
+ * запасным источником — ими живёт своя сборка, и в них же ляжет вендорский
+ * клиент, если Tempo такой выдаст. Правило выбора — в pickTempoOAuthClient.
+ *
+ * Функция асинхронная: реквизиты установки лежат в секретном хранилище. Все, кто
+ * её зовёт, ходят в сеть следующей же строкой, так что лишним чтением это не
+ * становится.
  */
-export function tempoOAuthConfig() {
-  const clientId = process.env[CLIENT_ID];
-  const clientSecret = process.env[CLIENT_SECRET];
-  return { clientId, clientSecret, available: Boolean(clientId && clientSecret) };
+export async function tempoOAuthConfig() {
+  const { tempoClientId, tempoClientSecret } = await getCredentials();
+  return pickTempoOAuthClient({
+    stored: { clientId: tempoClientId, clientSecret: tempoClientSecret },
+    deployment: { clientId: process.env[CLIENT_ID], clientSecret: process.env[CLIENT_SECRET] },
+  });
+}
+
+/**
+ * Что администратору нужно вписать в Tempo и где это делается. Отдельным
+ * резолвером, а не полем общего состояния страницы: и адрес возврата, и адрес
+ * инстанса стоят по запросу в Jira и в платформу, а нужны они одному экрану —
+ * мастеру настройки, который открывают один раз за всю жизнь установки.
+ */
+export async function getTempoSetup() {
+  const [redirectUri, jiraUrl] = await Promise.all([callbackUrl(), getJiraBaseUrl()]);
+  return { redirectUri, tempoOAuthAppsUrl: `${jiraUrl}${TEMPO_OAUTH_APPS_PATH}` };
+}
+
+/**
+ * Реквизиты приложения, заведённого админом в своём Tempo.
+ *
+ * Пара пишется двумя записями, и упасть между ними теоретически можно — но
+ * половина пары не опасна: pickTempoOAuthClient берёт источник только целиком,
+ * так что недописанная пара читается как «приложение не задано», а не как чужой
+ * client id со своим секретом.
+ */
+export async function saveTempoOAuthApp({ clientId, clientSecret } = {}) {
+  const id = String(clientId ?? '').trim();
+  const secret = String(clientSecret ?? '').trim();
+  if (!id || !secret) throw new Error('Both the client ID and the client secret are required');
+
+  await saveCredential('tempoClientId', id);
+  await saveCredential('tempoClientSecret', secret);
+}
+
+/**
+ * Забыть приложение. Выданный им доступ не трогаем: access-токен продолжает
+ * работать до конца срока независимо от того, помним ли мы приложение, и рвать
+ * работающую рассылку на действии «поменять реквизиты» нельзя. Обновить такой
+ * токен уже не выйдет — об этом говорит вкладка, а прогон, если до него дойдёт,
+ * пометит подключение сломанным сам.
+ */
+export async function clearTempoOAuthApp() {
+  await clearCredential('tempoClientId');
+  await clearCredential('tempoClientSecret');
 }
 
 /** Состояние подключения для страницы настроек. Токен наружу не отдаётся никогда. */
 export async function getTempoStatus() {
-  const [stored, credentials] = await Promise.all([getTempoConnection(), getCredentialsStatus()]);
+  const [stored, credentials, client] = await Promise.all([
+    getTempoConnection(),
+    getCredentialsStatus(),
+    tempoOAuthConfig(),
+  ]);
   const token = credentials.tempoToken;
   // Установки, где токен вставили руками ещё до появления кнопки, записи о
   // подключении не имеют, а показывать их как «не подключено» нельзя: worklog'и
@@ -80,7 +136,9 @@ export async function getTempoStatus() {
   const connection =
     stored ?? (token.isSet ? { method: 'token', connectedAt: token.updatedAt ?? null } : null);
 
-  return { connection, oauthAvailable: tempoOAuthConfig().available };
+  // clientSource говорит вкладке, что показывать: приложение этой установки
+  // можно поменять и удалить, вендорское из переменных сборки — нет.
+  return { connection, oauthAvailable: client.available, clientSource: client.source };
 }
 
 /**
@@ -88,10 +146,10 @@ export async function getTempoStatus() {
  * редирект, — открывает её фронтенд через router.open, в соседней вкладке.
  */
 export async function startTempoConnect(requestedBy = null) {
-  const { clientId, available } = tempoOAuthConfig();
+  const { clientId, available } = await tempoOAuthConfig();
   if (!available) {
     throw new Error(
-      `Tempo OAuth is not configured for this deployment — ${CLIENT_ID} and ${CLIENT_SECRET} must be set. Paste an API token manually instead.`
+      'This installation has no Tempo OAuth application yet — register one in Tempo → Settings → Data Access and save its credentials on the Connections tab.'
     );
   }
 
@@ -309,8 +367,8 @@ export async function noteTempoCheck(result) {
  * заголовок Basic, как у Slack, здесь не предусмотрен.
  */
 async function requestToken(params) {
-  const { clientId, clientSecret, available } = tempoOAuthConfig();
-  if (!available) throw new Error(`Tempo OAuth is not configured — ${CLIENT_ID} and ${CLIENT_SECRET} are missing`);
+  const { clientId, clientSecret, available } = await tempoOAuthConfig();
+  if (!available) throw new Error('This installation has no Tempo OAuth application — register one and save its credentials on the Connections tab');
 
   const body = new URLSearchParams({
     ...params,
@@ -346,8 +404,8 @@ async function requestToken(params) {
 }
 
 async function revokeToken(token, hint) {
-  const { clientId, clientSecret, available } = tempoOAuthConfig();
-  if (!available) return { ok: false, message: 'Tempo OAuth is not configured in this deployment' };
+  const { clientId, clientSecret, available } = await tempoOAuthConfig();
+  if (!available) return { ok: false, message: 'The Tempo OAuth application credentials are gone — there is nothing to revoke the access with' };
 
   try {
     const res = await fetch(TEMPO_REVOKE_URL, {

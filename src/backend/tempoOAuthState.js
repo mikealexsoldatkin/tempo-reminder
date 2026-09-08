@@ -22,6 +22,51 @@ export const TEMPO_TOKEN_URL = 'https://api.tempo.io/oauth/token/';
 export const TEMPO_REVOKE_URL = 'https://api.tempo.io/oauth/revoke_token/';
 
 /**
+ * Раздел настроек Tempo, где заводится OAuth-приложение, — сразу нужная вкладка,
+ * без блужданий по меню. Хост у каждого свой, путь — общий.
+ *
+ * Два UUID в пути — это id приложения Tempo и id его окружения на Forge, а не
+ * что-то, свойственное конкретной Jira: у приложения из Marketplace они одни на
+ * все установки, поэтому путь можно держать константой. Прежний адрес
+ * Connect-сервлета (`/plugins/servlet/ac/io.tempo.jira/tempo-app#!/configuration`)
+ * ещё работает, но приводит в корень настроек и редиректом — Tempo переехала на
+ * Forge, и вкладка `identity-service` живёт уже по этому адресу.
+ *
+ * Если Tempo однажды сменит окружение и ссылка приведёт в никуда, мастер от этого
+ * не развалится: шаги называют раздел словами, и найти его по меню можно и так.
+ */
+export const TEMPO_OAUTH_APPS_PATH =
+  '/jira/apps/fa75e928-007a-4af4-9530-76503bcd4cba/ea7fda46-2015-4367-bd93-992fbf0c58ca/configuration/identity-service';
+
+/**
+ * Чьи реквизиты OAuth-приложения Tempo брать.
+ *
+ * Их два источника, и это не дублирование, а два разных способа поставить
+ * приложение. `installation` — приложение, заведённое админом в своём Tempo:
+ * иначе никак, потому что OAuth-приложение Tempo принадлежит инстансу, где его
+ * создали, и вендорское значение чужому клиенту просто не подойдёт («Invalid
+ * client id»). `deployment` — переменные окружения сборки: так живёт своя сборка
+ * и так же ляжет вендорский клиент, если Tempo его когда-нибудь выдаст.
+ *
+ * Пара берётся только целиком. Половина от одного приложения с половиной от
+ * другого дала бы `invalid_client` в момент обмена кода — то есть после того, как
+ * админ уже прошёл экран согласия, и в месте, где причину не видно.
+ */
+export function pickTempoOAuthClient({ stored, deployment } = {}) {
+  const whole = (source) => {
+    const clientId = String(source?.clientId ?? '').trim();
+    const clientSecret = String(source?.clientSecret ?? '').trim();
+    return clientId && clientSecret ? { clientId, clientSecret } : null;
+  };
+
+  const installation = whole(stored);
+  if (installation) return { ...installation, available: true, source: 'installation' };
+  const vendor = whole(deployment);
+  if (vendor) return { ...vendor, available: true, source: 'deployment' };
+  return { clientId: null, clientSecret: null, available: false, source: null };
+}
+
+/**
  * Сколько живёт начатое подключение: администратор за это время должен нажать
  * Authorize. Всё, что дольше, — брошенная вкладка, и записывать по ней токен не за чем.
  */
@@ -133,7 +178,8 @@ const TEMPO_ERROR_HINTS = {
   access_denied: 'You denied access on the Tempo screen. Nothing was changed.',
   invalid_grant:
     'Tempo rejected the authorization code or the refresh token — it was already used or has expired. Start the connection again.',
-  invalid_client: 'Tempo does not recognise the client id or secret — check TEMPO_CLIENT_ID and TEMPO_CLIENT_SECRET.',
+  invalid_client:
+    'Tempo does not recognise this OAuth application. Most often it was created in a different Jira site’s Tempo — the application has to live in the Tempo of this very site — or its client secret was copied incompletely.',
   invalid_request:
     'Tempo rejected the request. Usually the redirect URL differs from the one registered in Tempo → Settings → OAuth 2.0 Applications.',
   unauthorized_client: 'This OAuth application is not allowed to use the authorization code grant — check its settings in Tempo.',
