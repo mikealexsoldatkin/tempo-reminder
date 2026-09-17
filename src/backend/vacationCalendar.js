@@ -1,6 +1,14 @@
 import { fetch } from '@forge/api';
 import { parseIcs } from './ics.js';
-import { collectVacationDays, indexPeople, matchPeople } from './vacations.js';
+import {
+  collectVacationDays,
+  indexPeople,
+  matchPeople,
+  mergeVacationEvents,
+  rememberedVacationEvents,
+} from './vacations.js';
+import { getCachedVacationEvents, saveCachedVacationEvents } from './store.js';
+import { sleep } from './tempo.js';
 import { addDays } from './workdays.js';
 
 /**
@@ -23,16 +31,79 @@ const CALENDAR_HOST = 'calendar.google.com';
 /**
  * Отпускные дни отслеживаемых людей за окно.
  *
- * @param {{ icsUrl: string, people: Array, range: {from: string, to: string} }} options
- * @returns {Promise<{daysByPerson: Map<string, Set<string>>, matchedEvents: number, unmatched: Array, recurringSkipped: number, timedSkipped: number, calendarName: string|null, totalEvents: number}>}
+ * Прочитанное запоминается, а неудачное чтение подменяется запомненным: отказ
+ * Google не должен превращаться в «отпусков не было». Различаем три исхода —
+ * фид прочитан (свежие события плюс уже закончившиеся из памяти), фид не
+ * прочитан (только память) и фид отдал пустоту при непустой памяти (тоже только
+ * память: пустой ответ от кэширующего гугловского фида — это почти всегда не
+ * «отпуска кончились»).
+ *
+ * @param {{ icsUrl: string, people: Array, range: {from: string, to: string}, today?: string }} options
+ * @returns {Promise<{daysByPerson: Map<string, Set<string>>, matchedEvents: number, unmatched: Array, recurringSkipped: number, timedSkipped: number, calendarName: string|null, totalEvents: number, stale: boolean, remembered: number, warning: string|null, cachedAt: string|null}>}
  */
-export async function getVacationDays({ icsUrl, people, range }) {
-  const { calendarName, events } = await fetchCalendar(icsUrl);
+export async function getVacationDays({ icsUrl, people, range, today = range.to }) {
+  const cached = await getCachedVacationEvents();
+  const fallback = () => rememberedVacationEvents(cached.events, today);
+
+  let calendarName = null;
+  let totalEvents = 0;
+  let events;
+  let remembered = 0;
+  let stale = false;
+  let warning = null;
+
+  try {
+    const feed = await fetchCalendar(icsUrl);
+    calendarName = feed.calendarName;
+    totalEvents = feed.events.length;
+
+    const known = fallback();
+    if (totalEvents === 0 && known.length > 0) {
+      events = known;
+      remembered = known.length;
+      stale = true;
+      warning =
+        'The vacation calendar came back empty while it had events before — the remembered copy ' +
+        `from ${describeAge(cached.fetchedAt)} was used and the calendar was left as is`;
+    } else {
+      const merged = mergeVacationEvents({ fresh: feed.events, cached: cached.events, today });
+      events = merged.events;
+      remembered = merged.remembered;
+      await saveCachedVacationEvents(merged.cache);
+    }
+  } catch (e) {
+    const known = fallback();
+    // Нечем подстраховаться — пусть вызывающий решает, как быть с ошибкой: это
+    // ровно то поведение, что было до появления памяти.
+    if (known.length === 0) throw e;
+
+    events = known;
+    remembered = known.length;
+    stale = true;
+    warning = `Couldn’t read the vacation calendar: ${e.message} — the remembered copy from ${describeAge(cached.fetchedAt)} was used instead`;
+  }
+
   return {
     calendarName,
-    totalEvents: events.length,
+    totalEvents,
+    stale,
+    remembered,
+    warning,
+    cachedAt: cached.fetchedAt,
     ...collectVacationDays(events, people, range),
   };
+}
+
+/** «2026-09-15T06:00:00Z (2 days ago)» — возраст страховки важнее самой метки. */
+function describeAge(fetchedAt) {
+  if (!fetchedAt) return 'an earlier read';
+  const ageMs = Date.now() - Date.parse(fetchedAt);
+  if (!Number.isFinite(ageMs) || ageMs < 0) return fetchedAt;
+
+  const hours = Math.floor(ageMs / 3600000);
+  if (hours < 1) return `${fetchedAt} (less than an hour ago)`;
+  if (hours < 48) return `${fetchedAt} (${hours}h ago)`;
+  return `${fetchedAt} (${Math.floor(hours / 24)} days ago)`;
 }
 
 /**
@@ -99,10 +170,46 @@ const PREVIEW_UNMATCHED = 10;
 
 /* ------------------------------ загрузка ------------------------------ */
 
+/**
+ * Чтение фида с ретраями.
+ *
+ * Повторяем то, что бывает разовым: оборванный запрос, 429 и 5xx. Ответы, которые
+ * повтором не исправить, — 404 на сброшенный secret-адрес, прочие 4xx и страницу
+ * входа вместо календаря — бросаем сразу: три попытки подряд получить тот же 404
+ * только съедят время прогона.
+ *
+ * Причина отдельного внимания к сети: пропущенный ответ Google раньше означал
+ * «отпусков нет» и превращался в напоминания тем, кого на работе не было.
+ */
+const FETCH_ATTEMPTS = 3;
+const RETRY_BASE_MS = 500;
+
 async function fetchCalendar(icsUrl) {
   const url = validateUrl(icsUrl);
 
-  const res = await fetch(url, { headers: { Accept: 'text/calendar' } });
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await readCalendar(url);
+    } catch (e) {
+      if (!e.retryable || attempt >= FETCH_ATTEMPTS) throw e;
+      const waitMs = RETRY_BASE_MS * 2 ** (attempt - 1);
+      console.warn(
+        `Календарь отпусков: ${e.message}; попытка ${attempt}/${FETCH_ATTEMPTS - 1} через ${waitMs}ms`
+      );
+      await sleep(waitMs);
+    }
+  }
+}
+
+async function readCalendar(url) {
+  let res;
+  try {
+    res = await fetch(url, { headers: { Accept: 'text/calendar' } });
+  } catch (e) {
+    // Сеть отвалилась — именно тот случай, ради которого здесь ретраи.
+    throw retryable(new Error(`the request to Google failed (${e.message})`));
+  }
+
   if (!res.ok) {
     if (res.status === 404) {
       throw new Error(
@@ -110,10 +217,17 @@ async function fetchCalendar(icsUrl) {
           'calendar owner resets it — copy the current one from the calendar settings.'
       );
     }
-    throw new Error(`Google returned ${res.status} for the iCal address`);
+    const error = new Error(`Google returned ${res.status} for the iCal address`);
+    throw res.status === 429 || res.status >= 500 ? retryable(error) : error;
   }
 
-  const text = await res.text();
+  let text;
+  try {
+    text = await res.text();
+  } catch (e) {
+    // Заголовки пришли, тело оборвалось — повторяем так же, как оборванный запрос.
+    throw retryable(new Error(`the calendar body could not be read (${e.message})`));
+  }
   // Тот же 200 Google отдаёт и на страницу входа: без этой проверки парсер вернул
   // бы ноль событий, и в UI это выглядело бы как «в календаре нет отпусков».
   if (!text.includes('BEGIN:VCALENDAR')) {
@@ -128,6 +242,12 @@ async function fetchCalendar(icsUrl) {
     console.warn('Календарь отпусков прочитан, но событий в нём нет');
   }
   return parsed;
+}
+
+/** Пометка «это стоит повторить» — читается в fetchCalendar. */
+function retryable(error) {
+  error.retryable = true;
+  return error;
 }
 
 function validateUrl(icsUrl) {

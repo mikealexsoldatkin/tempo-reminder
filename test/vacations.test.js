@@ -1,11 +1,16 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  cacheableEvents,
   collectVacationDays,
   excludeVacationDays,
   indexPeople,
   matchPeople,
+  mergeVacationEvents,
   normalize,
+  pruneVacationEvents,
+  rememberedVacationEvents,
+  restoreEvents,
 } from '../src/backend/vacations.js';
 
 const person = (accountId, displayName, calendarName = null) => ({
@@ -162,4 +167,122 @@ test('без отпусков список пропущенных не меня�
   assert.deepEqual(result.missingDaysByUser.get('u1'), ['2026-08-10']);
   assert.deepEqual(result.missingDaysByUser.get('u2'), []);
   assert.deepEqual(result.excusedDaysByUser.get('u1'), []);
+});
+
+/* ------------------------ память о событиях ------------------------ */
+
+const uidEvent = (uid, summary, start, end) => ({ ...allDay(summary, start, end), uid });
+
+test('запоминаем только события на весь день без повторов, в урезанной форме', () => {
+  const stored = cacheableEvents([
+    uidEvent('a@g', '[vacation] Aleksandr Bugrov', '2026-09-01', '2026-09-15'),
+    { summary: '[vacation] Anna Ivanova', allDay: false, start: '2026-09-02', end: '2026-09-03', recurring: false },
+    { summary: '[every friday] Ann Lee', allDay: true, start: '2026-09-04', end: '2026-09-05', recurring: true },
+  ]);
+
+  assert.deepEqual(stored, [
+    { uid: 'a@g', summary: '[vacation] Aleksandr Bugrov', start: '2026-09-01', end: '2026-09-15' },
+  ]);
+});
+
+test('событие без DTEND запоминается как один день', () => {
+  const stored = cacheableEvents([{ summary: '[dayoff] X', allDay: true, start: '2026-09-04', recurring: false }]);
+  assert.equal(stored[0].end, '2026-09-05');
+});
+
+test('восстановленное событие снова на весь день и без повтора', () => {
+  const [event] = restoreEvents([
+    { uid: 'a@g', summary: '[vacation] X', start: '2026-09-01', end: '2026-09-15' },
+  ]);
+  assert.equal(event.allDay, true);
+  assert.equal(event.recurring, false);
+});
+
+test('из памяти уходит то, что закончилось раньше горизонта', () => {
+  const kept = pruneVacationEvents(
+    [
+      { uid: 'old', summary: 'X', start: '2026-01-05', end: '2026-01-10' },
+      { uid: 'new', summary: 'Y', start: '2026-09-01', end: '2026-09-15' },
+    ],
+    '2026-09-17',
+    120
+  );
+  assert.deepEqual(kept.map((e) => e.uid), ['new']);
+});
+
+/*
+ * Собственно тот случай, ради которого память и появилась: человек был в отпуске
+ * 1–14 сентября, 15-го вышел, а фид в этот прогон ничего не отдал.
+ */
+test('фид не прочитан — отпуск берётся из памяти, и дни остаются прощёнными', () => {
+  const cached = cacheableEvents([
+    uidEvent('a@g', '[vacation] Aleksandr Bugrov', '2026-09-01', '2026-09-15'),
+  ]);
+  const events = rememberedVacationEvents(cached, '2026-09-15');
+  const collected = collectVacationDays(events, [bugrov], { from: '2026-09-08', to: '2026-09-15' });
+
+  const missing = new Map([['u1', ['2026-09-08', '2026-09-09', '2026-09-10', '2026-09-11']]]);
+  const result = excludeVacationDays(missing, collected.daysByPerson);
+  assert.deepEqual(result.missingDaysByUser.get('u1'), []);
+});
+
+test('закончившийся отпуск, пропавший из фида, остаётся в памяти', () => {
+  const cached = cacheableEvents([
+    uidEvent('a@g', '[vacation] Aleksandr Bugrov', '2026-09-01', '2026-09-15'),
+  ]);
+  const merged = mergeVacationEvents({ fresh: [], cached, today: '2026-09-17' });
+
+  assert.equal(merged.remembered, 1);
+  assert.equal(merged.cache.length, 1);
+  const collected = collectVacationDays(merged.events, [bugrov], { from: '2026-09-08', to: '2026-09-17' });
+  assert.ok(collected.daysByPerson.get('u1').has('2026-09-10'));
+});
+
+test('ещё не закончившийся отпуск, удалённый из календаря, забывается', () => {
+  const cached = cacheableEvents([
+    uidEvent('a@g', '[vacation] Aleksandr Bugrov', '2026-09-20', '2026-09-25'),
+  ]);
+  const merged = mergeVacationEvents({ fresh: [], cached, today: '2026-09-17' });
+
+  assert.equal(merged.remembered, 0);
+  assert.deepEqual(merged.cache, []);
+});
+
+test('подрезанный в календаре отпуск обновляется по UID, а не удваивается', () => {
+  const cached = cacheableEvents([
+    uidEvent('a@g', '[vacation] Aleksandr Bugrov', '2026-09-01', '2026-09-15'),
+  ]);
+  const fresh = [uidEvent('a@g', '[vacation] Aleksandr Bugrov', '2026-09-01', '2026-09-10')];
+  const merged = mergeVacationEvents({ fresh, cached, today: '2026-09-17' });
+
+  assert.equal(merged.remembered, 0);
+  assert.deepEqual(merged.cache, [
+    { uid: 'a@g', summary: '[vacation] Aleksandr Bugrov', start: '2026-09-01', end: '2026-09-10' },
+  ]);
+});
+
+test('свежие события отдаются как есть — счётчики пропущенных не врут', () => {
+  const fresh = [
+    { summary: '[vacation] Anna Ivanova', allDay: false, start: '2026-09-16', end: '2026-09-17', recurring: false },
+  ];
+  const merged = mergeVacationEvents({ fresh, cached: [], today: '2026-09-17' });
+  const collected = collectVacationDays(merged.events, [anna], { from: '2026-09-08', to: '2026-09-17' });
+
+  assert.equal(collected.timedSkipped, 1);
+  assert.deepEqual(merged.cache, []);
+});
+
+test('имя, исправленное в настройках, подхватывается и для запомненных отпусков', () => {
+  const cached = cacheableEvents([uidEvent('a@g', '[отпуск] Бугров Александр', '2026-09-01', '2026-09-15')]);
+  const events = rememberedVacationEvents(cached, '2026-09-17');
+  const renamed = person('u1', 'Aleksandr Bugrov', 'Бугров Александр');
+
+  const collected = collectVacationDays(events, [renamed], { from: '2026-09-08', to: '2026-09-17' });
+  assert.ok(collected.daysByPerson.get('u1').has('2026-09-09'));
+});
+
+test('пустая или битая память никого не роняет', () => {
+  assert.deepEqual(rememberedVacationEvents(null, '2026-09-17'), []);
+  assert.deepEqual(rememberedVacationEvents([{ summary: 'X' }], '2026-09-17'), []);
+  assert.deepEqual(mergeVacationEvents({ fresh: null, cached: null, today: '2026-09-17' }).cache, []);
 });

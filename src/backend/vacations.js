@@ -11,6 +11,7 @@
  */
 
 import { eventDays } from './ics.js';
+import { addDays } from './workdays.js';
 
 /**
  * Отпускные дни каждого человека в пределах окна.
@@ -164,4 +165,124 @@ export function excludeVacationDays(missingDaysByUser, daysByPerson) {
   }
 
   return { missingDaysByUser: missing, excusedDaysByUser: excused };
+}
+
+/* --------------------------- память о событиях --------------------------- */
+
+/**
+ * Кэш событий календаря.
+ *
+ * Отпуск — величина, которую прогон пересчитывает заново из живого фида, и любой
+ * его отказ раньше означал «отпусков нет»: человек, вернувшийся из отпуска,
+ * получал претензию за дни своего отсутствия, а менеджер — его в дайджесте.
+ * Поэтому прочитанные события запоминаются, и у прогона всегда есть чем
+ * подстраховаться, если Google не ответил или отдал пустоту.
+ *
+ * Помним не «прощённые дни», а сами события: список отслеживаемых и окно проверки
+ * меняются, и сопоставление имён должно считаться каждый раз заново — иначе
+ * исправленное написание имени не подхватилось бы для уже прошедших отпусков.
+ */
+
+/**
+ * Сколько прошедших событий держим. Окно проверки ограничено 30 рабочими днями
+ * (≈ 6 недель), так что 120 календарных дней покрывают его с запасом, а кэш при
+ * этом не растёт бесконечно.
+ */
+export const VACATION_CACHE_DAYS = 120;
+
+// Предохранитель по размеру: значение в KVS ограничено, а на четыре поля события
+// это тысячи отпусков — больше, чем бывает у компании за полгода.
+const MAX_CACHED_EVENTS = 2000;
+
+/**
+ * Что из прочитанного вообще имеет смысл запоминать: только события на весь день
+ * и только неповторяющиеся — остальные в отпуска всё равно не попадают. Хранимая
+ * форма урезана до четырёх полей: ключ, заголовок и границы.
+ */
+export function cacheableEvents(events) {
+  const seen = new Set();
+  const stored = [];
+  for (const event of events ?? []) {
+    if (!event?.allDay || event.recurring || !event.start) continue;
+    const entry = {
+      uid: event.uid ?? null,
+      summary: event.summary ?? '',
+      start: event.start,
+      end: event.end ?? addDays(event.start, 1),
+    };
+    const key = eventKey(entry);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    stored.push(entry);
+  }
+  return stored;
+}
+
+/** Обратно в форму события: всё запомненное по построению на весь день и без RRULE. */
+export function restoreEvents(stored) {
+  return (stored ?? [])
+    .filter((entry) => entry?.start && entry?.end)
+    .map((entry) => ({
+      uid: entry.uid ?? null,
+      summary: entry.summary ?? '',
+      start: entry.start,
+      end: entry.end,
+      allDay: true,
+      recurring: false,
+    }));
+}
+
+/** Забываем то, что закончилось раньше горизонта: такие дни уже вне любого окна. */
+export function pruneVacationEvents(stored, today, keepDays = VACATION_CACHE_DAYS) {
+  const horizon = addDays(today, -keepDays);
+  return sortEvents((stored ?? []).filter((entry) => entry?.end && entry.end > horizon)).slice(
+    -MAX_CACHED_EVENTS
+  );
+}
+
+/** Запомненные события как события — для прогона, которому фид ничего не дал. */
+export function rememberedVacationEvents(stored, today) {
+  return restoreEvents(pruneVacationEvents(stored, today));
+}
+
+/**
+ * Свежее прочитанное плюс то, что помним.
+ *
+ * Правило одно: событие, которого больше нет в фиде, сохраняется, только если оно
+ * уже закончилось. Прошедший отпуск не отменяют — его удаляют, подчищая календарь,
+ * и тогда прощённые дни не должны задним числом превращаться в долг. А будущий
+ * отпуск отменяют и переносят по-настоящему, и удаление в календаре обязано
+ * доезжать до приложения.
+ *
+ * @param {{fresh: Array, cached: Array, today: string}} options
+ * @returns {{events: Array, cache: Array, remembered: number}}
+ *   `events` — что отдать в collectVacationDays (свежие события как есть, чтобы
+ *   счётчики пропущенных не соврали), `cache` — что положить обратно в хранилище.
+ */
+export function mergeVacationEvents({ fresh, cached, today }) {
+  const freshStored = cacheableEvents(fresh);
+  const freshKeys = new Set(freshStored.map(eventKey));
+  const remembered = pruneVacationEvents(cached, today).filter(
+    (entry) => !freshKeys.has(eventKey(entry)) && entry.end <= today
+  );
+
+  return {
+    events: [...(fresh ?? []), ...restoreEvents(remembered)],
+    cache: sortEvents([...freshStored, ...remembered]).slice(-MAX_CACHED_EVENTS),
+    remembered: remembered.length,
+  };
+}
+
+/**
+ * Чем событие себя опознаёт при следующем чтении. UID у гугловского фида есть
+ * всегда, и по нему правка дат подхватывается как правка, а не как новое событие.
+ * Заголовок с границами — запасной ключ для фидов без UID.
+ */
+function eventKey(entry) {
+  return entry.uid ? `uid:${entry.uid}` : `ev:${normalize(entry.summary)}|${entry.start}|${entry.end}`;
+}
+
+/** По началу отпуска: при обрезке по размеру уходят самые старые. */
+function sortEvents(entries) {
+  return [...entries].sort((a, b) => a.start.localeCompare(b.start) || a.end.localeCompare(b.end));
 }

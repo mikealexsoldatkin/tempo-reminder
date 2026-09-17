@@ -269,6 +269,7 @@ export async function runReminderCheck({ trigger, requestedBy = null, now = new 
     users,
     icsUrl: vacationIcsUrl,
     range: { from: window.from, to: today },
+    today,
   });
   const { missingDaysByUser, excusedDaysByUser } = excludeVacationDays(
     missingBeforeVacations,
@@ -356,7 +357,7 @@ export async function runReminderCheck({ trigger, requestedBy = null, now = new 
  *
  * @returns {Promise<{daysByPerson: Map<string, Set<string>>, report: object}>}
  */
-async function loadVacations({ settings, users, icsUrl, range }) {
+async function loadVacations({ settings, users, icsUrl, range, today = range.to }) {
   const empty = new Map();
   if (!settings.skipVacations) {
     return { daysByPerson: empty, report: { enabled: false, used: false, warning: null } };
@@ -374,21 +375,34 @@ async function loadVacations({ settings, users, icsUrl, range }) {
   }
 
   try {
-    const result = await getVacationDays({ icsUrl, people: users, range });
+    const result = await getVacationDays({ icsUrl, people: users, range, today });
     const peopleOnLeave = result.daysByPerson.size;
     console.log(
       `Календарь отпусков: событий ${result.totalEvents}, сматчилось ${result.matchedEvents}, ` +
-        `людей с отпуском в окне ${peopleOnLeave}, не сматчилось заголовков ${result.unmatched.length}`
+        `людей с отпуском в окне ${peopleOnLeave}, не сматчилось заголовков ${result.unmatched.length}` +
+        `, из памяти ${result.remembered}${result.stale ? ' (фид не использован)' : ''}`
     );
+    // Предупреждений может быть несколько, и важнейшее — про подмену фида памятью:
+    // из него видно, что часть отпусков в этом прогоне взята не из календаря.
+    const warnings = [
+      result.warning,
+      result.recurringSkipped > 0 &&
+        `${result.recurringSkipped} repeating calendar events were ignored — the app doesn’t expand recurring events`,
+      result.timedSkipped > 0 &&
+        `${result.timedSkipped} calendar events with a time were ignored — a vacation has to be an all-day event`,
+      result.unmatched.length > 0 &&
+        `${result.unmatched.length} calendar titles matched nobody tracked (e.g. “${result.unmatched[0].title}”) — check the “Name in the vacation calendar” column`,
+    ].filter(Boolean);
+
     return {
       daysByPerson: result.daysByPerson,
       report: {
         enabled: true,
         used: true,
-        warning:
-          result.recurringSkipped > 0
-            ? `${result.recurringSkipped} repeating calendar events were ignored — the app doesn’t expand recurring events`
-            : null,
+        stale: result.stale,
+        cachedAt: result.cachedAt,
+        remembered: result.remembered,
+        warning: warnings.length > 0 ? warnings.join(' · ') : null,
         matchedEvents: result.matchedEvents,
         unmatchedTitles: result.unmatched.length,
         peopleOnLeave,

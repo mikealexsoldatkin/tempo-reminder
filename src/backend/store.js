@@ -16,6 +16,9 @@ const KEY = {
   lastReport: 'last-run-report',
   scheduleState: 'schedule-state',
   holidays: 'holidays',
+  // Запомненные события календаря отпусков: страховка на случай, когда Google не
+  // ответил или отдал пустой фид (см. vacations.js).
+  vacationEvents: 'vacation-events',
   // Чем подключён Slack (кнопкой или вставленным токеном), к какому workspace и
   // жив ли ещё токен. Сам токен — в секретном ключе slackBotToken.
   slackConnection: 'slack-connection',
@@ -847,4 +850,24 @@ export async function saveLastReport(report) {
   };
   await kvs.set(KEY.lastReport, stored);
   return stored;
+}
+
+/* ---------------------- кэш календаря отпусков ---------------------- */
+
+/**
+ * Что приложение помнит из календаря отпусков с прошлых чтений.
+ *
+ * Битую запись отдаём как пустую: страховка не должна ронять прогон, который она
+ * страхует — без неё он просто отработает как раньше, по живому фиду.
+ *
+ * @returns {Promise<{fetchedAt: string|null, events: Array}>}
+ */
+export async function getCachedVacationEvents() {
+  const stored = await kvs.get(KEY.vacationEvents);
+  if (!stored || !Array.isArray(stored.events)) return { fetchedAt: null, events: [] };
+  return { fetchedAt: stored.fetchedAt ?? null, events: stored.events };
+}
+
+export async function saveCachedVacationEvents(events, fetchedAt = new Date().toISOString()) {
+  await kvs.set(KEY.vacationEvents, { fetchedAt, events });
 }
