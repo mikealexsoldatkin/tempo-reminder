@@ -9,7 +9,7 @@ modules:
       render: native
       resolver:
         function: resolver
-      title: Tempo Reminders
+      title: Tempo Reminders Configuration
   scheduledTrigger:
     - key: tempo-reminder-hourly
       function: scheduled
